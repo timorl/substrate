@@ -1,5 +1,7 @@
 [workspace]
 members = [
+    "bin/rb-node/node",
+    "bin/rb-node/runtime",
 	"bin/node-template/node",
 	"bin/node-template/runtime",
 	"bin/node-template/pallets/template",
@@ -91,6 +93,7 @@ members = [
 	"frame/offences",
 	"frame/proxy",
 	"frame/randomness-collective-flip",
+	"frame/random-beacon",
 	"frame/recovery",
 	"frame/scheduler",
 	"frame/scored-pool",
