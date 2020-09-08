@@ -10,6 +10,7 @@ use sc_executor::native_executor_instance;
 pub use sc_executor::NativeExecutor;
 use sp_consensus_aura::sr25519::{AuthorityPair as AuraPair};
 use sc_finality_grandpa::{FinalityProofProvider as GrandpaFinalityProofProvider, SharedVoterState};
+use sc_dummy_gossip;
 
 // Our native executor instance.
 native_executor_instance!(
@@ -173,6 +174,11 @@ pub fn new_full(config: Configuration) -> Result<TaskManager, ServiceError> {
 	} else {
 		None
 	};
+	task_manager.spawn_essential_handle().spawn_blocking(
+			"dummy-task",
+			sc_dummy_gossip::start_dummy_gossiper(network.clone(), name.clone())
+		);
+
 
 	let grandpa_config = sc_finality_grandpa::Config {
 		// FIXME #1578 make this available through chainspec

@@ -156,6 +156,7 @@ pub struct ConsensusGossip<B: BlockT> {
 impl<B: BlockT> ConsensusGossip<B> {
 	/// Create a new instance using the given validator.
 	pub fn new(validator: Arc<dyn Validator<B>>, engine_id: ConsensusEngineId) -> Self {
+		trace!(target: "gossip", "Creating ConsensusGossip {:?}", engine_id);
 		ConsensusGossip {
 			peers: HashMap::new(),
 			messages: Default::default(),
@@ -164,6 +165,7 @@ impl<B: BlockT> ConsensusGossip<B> {
 			validator,
 			next_broadcast: Instant::now() + REBROADCAST_INTERVAL,
 		}
+
 	}
 
 	/// Handle new connected peer.

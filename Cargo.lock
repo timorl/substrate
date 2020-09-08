@@ -5950,6 +5950,7 @@ dependencies = [
  "sc-client-api",
  "sc-consensus",
  "sc-consensus-aura",
+ "sc-dummy-gossip",
  "sc-executor",
  "sc-finality-grandpa",
  "sc-rpc",
@@ -6770,6 +6771,25 @@ dependencies = [
  "sp-core",
  "sp-inherents",
  "sp-runtime",
+]
+
+[[package]]
+name = "sc-dummy-gossip"
+version = "0.8.0-rc6"
+dependencies = [
+ "async-std",
+ "futures 0.3.5",
+ "futures-timer 3.0.2",
+ "libp2p",
+ "log",
+ "lru 0.4.3",
+ "quickcheck",
+ "rand 0.7.3",
+ "sc-network",
+ "sc-network-gossip",
+ "sp-runtime",
+ "substrate-test-runtime-client",
+ "wasm-timer",
 ]
 
 [[package]]

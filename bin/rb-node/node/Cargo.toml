@@ -33,6 +33,7 @@ sc-finality-grandpa = { version = "0.8.0-rc6", path = "../../../client/finality-
 sp-finality-grandpa = { version = "2.0.0-rc6", path = "../../../primitives/finality-grandpa" }
 sc-client-api = { version = "2.0.0-rc6", path = "../../../client/api" }
 sp-runtime = { version = "2.0.0-rc6", path = "../../../primitives/runtime" }
+sc-dummy-gossip = { version = "0.8.0-rc6", path = "../../../client/dummy-gossip" }
 
 # These dependencies are used for the node template's RPCs
 jsonrpc-core = "14.0.3"
