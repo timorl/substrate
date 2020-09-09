@@ -214,7 +214,10 @@ impl<B: BlockT> Future for NetworkBridge<B> {
                     self.outgoing = Some(outgoing);
                 }
 
-                self.outgoing.clone().unwrap().send();
+                if let Some(mut outgoing) = self.outgoing.take() {
+                    outgoing.send();
+                    self.outgoing = Some(outgoing);
+                }
 
                 if let Some(mut incoming) = self.incoming.take() {
                     let poll = incoming.poll_next_unpin(cx);
