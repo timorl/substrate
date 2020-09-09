@@ -11,7 +11,6 @@ use sp_consensus_aura::sr25519::{AuthorityPair as AuraPair};
 use sc_finality_grandpa::{FinalityProofProvider as GrandpaFinalityProofProvider};
 use log::info;
 use sp_core::crypto::key_types::DUMMY;
-use futures::stream::StreamExt;
 
 use ab_gossip::{NetworkBridge, LocalIdKeystore};
 
@@ -107,20 +106,10 @@ pub fn new_full(config: Configuration) -> Result<TaskManager, ServiceError> {
 			finality_proof_provider: None,
 		})?;
 
-        let nb = NetworkBridge::new(network);
         let keystore = LocalIdKeystore::from((public.into(), keystore.clone()  as sp_core::traits::BareCryptoStorePtr));
-        let (mut incoming, outgoing) = nb.round_communication(0, keystore);
+        let nb = NetworkBridge::new(name, network, keystore);
 
         task_manager.spawn_handle().spawn("network bridge", nb);
-
-        let data = name.clone();
-        task_manager.spawn_handle().spawn("receive", async move {
-            if let Some(signed) = incoming.next().await {
-                info!("{} received message {:?}", data, signed.message.data);
-            } 
-        });
- 
-        task_manager.spawn_handle().spawn("send", outgoing);
 
 	network_starter.start_network();
 	Ok(task_manager)

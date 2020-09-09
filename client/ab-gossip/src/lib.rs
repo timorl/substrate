@@ -2,14 +2,14 @@ use codec::{Encode, Decode};
 use log::info;
 
 use sc_network::{NetworkService, PeerId};
-use sc_network_gossip::{GossipEngine, Validator, ValidationResult, ValidatorContext};
+use sc_network_gossip::{GossipEngine, Validator, ValidationResult, ValidatorContext, TopicNotification};
 
 use sp_runtime::traits::{Block as BlockT, Hash as HashT, Header as HeaderT};
 use sp_core::traits::BareCryptoStorePtr;
 
 use parking_lot::{Mutex, RwLock};
 use std::{pin::Pin, sync::Arc, task::{Context, Poll}};
-use futures::prelude::*;
+use futures::{prelude::*, channel::mpsc::Receiver};
 
 const AB_GOSSIP_ID: [u8; 4] = *b"abgo";
 const AB_PROTOCOL_NAME: &[u8] = b"/abgossip";
@@ -119,48 +119,51 @@ impl<B: BlockT> Validator<B> for GossipValidator{
     }
 }
 
+#[derive(Clone)]
 pub struct OutgoingMessage<B: BlockT> {
-    msg: SignedMessage,
     round: u8,
+    sent: bool,
+    msg: SignedMessage,
     gossip_engine: Arc<Mutex<GossipEngine<B>>>,
 }
 
-impl<B: BlockT> Unpin for OutgoingMessage<B> {}
-
-impl<B: BlockT> Future for OutgoingMessage<B> {
-    type Output = ();
-    
-    fn poll(self: Pin<&mut Self>, _cx: &mut Context) -> Poll<Self::Output> {
-        info!(target: "ab-gossip", "sending message");
+impl<B: BlockT>  OutgoingMessage<B> {
+    fn send(&mut self) {
+        if self.sent {
+            return
+        }
         let message = GossipMessage{round: self.round, message: self.msg.clone()};
         let topic = round_topic::<B>(self.round);
         self.gossip_engine.lock().gossip_message(topic, message.encode(), true);
+        self.sent = true;
         info!(target: "ab-gossip", "sent message");
-    
-    	Poll::Ready(())
     }
 }
 
 pub struct NetworkBridge<B: BlockT> {
+    id: String,
+    keystore: LocalIdKeystore,
     gossip_engine: Arc<Mutex<GossipEngine<B>>>,
     validator: Arc<GossipValidator>,
+    incoming: Option<Receiver<TopicNotification>>,
+    outgoing: Option<OutgoingMessage<B>>,
 }
 
 impl<B: BlockT> Unpin for NetworkBridge<B> {}
 
 impl<B: BlockT> NetworkBridge<B> {
-    pub fn new(network: Arc<NetworkService<B, <B as BlockT>::Hash>>) -> Self {
+    pub fn new(id: String, network: Arc<NetworkService<B, <B as BlockT>::Hash>>, keystore: LocalIdKeystore) -> Self {
         let validator = Arc::new(GossipValidator::new());
         let gossip_engine = Arc::new(Mutex::new(GossipEngine::new(network.clone(), AB_GOSSIP_ID, AB_PROTOCOL_NAME, validator.clone())));
 
-        NetworkBridge{gossip_engine, validator}
+        NetworkBridge{id, keystore, gossip_engine, validator, incoming: None, outgoing: None}
     }
 
     pub fn note_round(&self, round: u8) {
         self.validator.note_round(round);
     }
 
-    pub fn round_communication(&self, round: u8, keystore: LocalIdKeystore) -> (impl Stream<Item=SignedMessage> + Unpin, OutgoingMessage<B>) {
+    fn round_communication(&self, round: u8) -> (Receiver<TopicNotification>, OutgoingMessage<B>) {
         self.note_round(round);
 
         let topic = round_topic::<B>(round);
@@ -177,12 +180,14 @@ impl<B: BlockT> NetworkBridge<B> {
                         future::ready(None)
                     }
                 }
-            });
+            }).into_inner();
 
-        let msg = Message{data: round.to_string()}.sign(keystore.local_id().clone(), keystore.as_ref()).unwrap();
+        let msg = Message{data: round.to_string()};
+        let msg = msg.sign(self.keystore.local_id().clone(), self.keystore.as_ref()).unwrap();
 
         let outgoing = OutgoingMessage::<B> {
             msg,
+            sent: false,
             round,
             gossip_engine: self.gossip_engine.clone(),
         };
@@ -195,14 +200,33 @@ impl<B: BlockT> NetworkBridge<B> {
 impl<B: BlockT> Future for NetworkBridge<B> {
 	type Output = ();
 
-	fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
+	fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
 		match self.gossip_engine.lock().poll_unpin(cx) {
 			Poll::Ready(()) => return Poll::Ready(
 				info!("Gossip engine future finished.")
 			),
 			Poll::Pending => {},
-		}
+		};
 
-		Poll::Pending
+                if let None = self.incoming {
+                    let (incoming, outgoing) = self.round_communication(0);
+                    self.incoming = Some(incoming);
+                    self.outgoing = Some(outgoing);
+                }
+
+                self.outgoing.clone().unwrap().send();
+
+                if let Some(mut incoming) = self.incoming.take() {
+                    let poll = incoming.poll_next_unpin(cx);
+                    self.incoming = Some(incoming);
+                    match poll {
+                        Poll::Ready(Some(signed)) => info!("{} received message {:?}", self.id, signed.message),
+                        Poll::Ready(None) => info!("poll_next_unpin returned Ready(None) ==> investigate!"),
+                        Poll::Pending => return Poll::Pending,
+                    }
+                }
+
+
+                Poll::Ready(())
 	}
 }
