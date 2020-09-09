@@ -9,7 +9,7 @@ use sp_core::traits::BareCryptoStorePtr;
 
 use parking_lot::{Mutex, RwLock};
 use std::{pin::Pin, sync::Arc, task::{Context, Poll}};
-use futures::{prelude::*, channel::mpsc};
+use futures::prelude::*;
 
 const AB_GOSSIP_ID: [u8; 4] = *b"abgo";
 const AB_PROTOCOL_NAME: &[u8] = b"/abgossip";
@@ -119,48 +119,25 @@ impl<B: BlockT> Validator<B> for GossipValidator{
     }
 }
 
-pub struct OutgoingMessages<B: BlockT> {
+pub struct OutgoingMessage<B: BlockT> {
+    msg: SignedMessage,
     round: u8,
-    sender: mpsc::Sender<SignedMessage>,
-    keystore: Option<LocalIdKeystore>,
-    network: Arc<Mutex<GossipEngine<B>>>,
+    gossip_engine: Arc<Mutex<GossipEngine<B>>>,
 }
 
-impl<B: BlockT> Sink<Message> for OutgoingMessages<B> {
-    type Error = Error;
+impl<B: BlockT> Unpin for OutgoingMessage<B> {}
 
-    fn poll_ready(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<(), Self::Error>> {
-        Sink::poll_ready(Pin::new(&mut self.sender), cx).map(|elem| { elem.map_err(|e| {
-            Error::Network(format!("Failed to poll_ready channel sender: {:?}", e))
-        })})
-    }
-
-    fn start_send(mut self: Pin<&mut Self>, msg: Message) -> Result<(), Self::Error> {
-        if let Some(ref keystore) = self.keystore {
-            let signed = msg.sign(keystore.local_id().clone(), keystore.as_ref()).ok_or_else(
-                || Error::Signing(format!("Failed to sign msg {:?}", msg))
-            )?;
-            let message = GossipMessage{round: self.round, message: signed.clone()};
-
-            let topic = round_topic::<B>(self.round);
-            self.network.lock().gossip_message(topic, message.encode(), false);
-
-            return self.sender.start_send(signed).map_err(|e|{
-                Error::Network(format!("Failed to start_send on channel sender: {:?}", e))
-            });
-        }
-
-        Ok(())
-    }
-
-    fn poll_flush(self: Pin<&mut Self>, _cx: &mut Context) -> Poll<Result<(), Self::Error>> {
-        Poll::Ready(Ok(()))
-    }
-
-    fn poll_close(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<(), Self::Error>> {
-        Sink::poll_close(Pin::new(&mut self.sender), cx).map(|elem| { elem.map_err(|e| {
-            Error::Network(format!("Failed to poll_close channel sender: {:?}", e))
-        })})
+impl<B: BlockT> Future for OutgoingMessage<B> {
+    type Output = ();
+    
+    fn poll(self: Pin<&mut Self>, _cx: &mut Context) -> Poll<Self::Output> {
+        info!(target: "ab-gossip", "sending message");
+        let message = GossipMessage{round: self.round, message: self.msg.clone()};
+        let topic = round_topic::<B>(self.round);
+        self.gossip_engine.lock().gossip_message(topic, message.encode(), true);
+        info!(target: "ab-gossip", "sent message");
+    
+    	Poll::Ready(())
     }
 }
 
@@ -183,7 +160,7 @@ impl<B: BlockT> NetworkBridge<B> {
         self.validator.note_round(round);
     }
 
-    pub fn round_communication(&self, round: u8, keystore: Option<LocalIdKeystore>) -> (impl Stream<Item=SignedMessage> + Unpin, OutgoingMessages<B>) {
+    pub fn round_communication(&self, round: u8, keystore: LocalIdKeystore) -> (impl Stream<Item=SignedMessage> + Unpin, OutgoingMessage<B>) {
         self.note_round(round);
 
         let topic = round_topic::<B>(round);
@@ -192,7 +169,7 @@ impl<B: BlockT> NetworkBridge<B> {
                 let decoded = GossipMessage::decode(&mut &notification.message[..]);
                 match decoded {
                     Ok(gm) => {
-                        info!(target: "ab-gossip", "received messege {:?}", gm.message);
+                        info!(target: "ab-gossip", "received messege {:?}", gm.message.message);
                         future::ready(Some(gm.message))
                     }
                     Err(ref e) => {
@@ -202,15 +179,14 @@ impl<B: BlockT> NetworkBridge<B> {
                 }
             });
 
-        let (tx, _rx) = mpsc::channel(0);
-        let outgoing = OutgoingMessages::<B> {
+        let msg = Message{data: round.to_string()}.sign(keystore.local_id().clone(), keystore.as_ref()).unwrap();
+
+        let outgoing = OutgoingMessage::<B> {
+            msg,
             round,
-            sender: tx,
-            keystore,
-            network: self.gossip_engine.clone(),
+            gossip_engine: self.gossip_engine.clone(),
         };
 
-        //let incoming = stream::select(incoming, rx);
 
         (incoming, outgoing)
     }

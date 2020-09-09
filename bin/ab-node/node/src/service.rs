@@ -1,7 +1,6 @@
 //! Service and ServiceFactory implementation. Specialized wrapper over substrate service.
 
 use std::sync::Arc;
-use std::pin::Pin;
 use sc_client_api::{ExecutorProvider, RemoteBackend};
 use node_template_runtime::{self, opaque::Block, RuntimeApi};
 use sc_service::{error::Error as ServiceError, Configuration, TaskManager};
@@ -12,11 +11,9 @@ use sp_consensus_aura::sr25519::{AuthorityPair as AuraPair};
 use sc_finality_grandpa::{FinalityProofProvider as GrandpaFinalityProofProvider};
 use log::info;
 use sp_core::crypto::key_types::DUMMY;
-use parking_lot::Mutex;
-use futures_sink::Sink;
 use futures::stream::StreamExt;
 
-use ab_gossip::{NetworkBridge, LocalIdKeystore, Message, Error::*};
+use ab_gossip::{NetworkBridge, LocalIdKeystore};
 
 
 // Our native executor instance.
@@ -112,7 +109,7 @@ pub fn new_full(config: Configuration) -> Result<TaskManager, ServiceError> {
 
         let nb = NetworkBridge::new(network);
         let keystore = LocalIdKeystore::from((public.into(), keystore.clone()  as sp_core::traits::BareCryptoStorePtr));
-        let (mut incoming, outgoing) = nb.round_communication(0, Some(keystore));
+        let (mut incoming, outgoing) = nb.round_communication(0, keystore);
 
         task_manager.spawn_handle().spawn("network bridge", nb);
 
@@ -123,16 +120,7 @@ pub fn new_full(config: Configuration) -> Result<TaskManager, ServiceError> {
             } 
         });
  
-
-	let outgoing = Arc::new(Mutex::new(outgoing));
-        let data = name.clone();
-        task_manager.spawn_handle().spawn("send", async move {
-            match Pin::new(&mut *outgoing.lock()).start_send(Message{data: data.clone()}) {
-                Ok(()) => info!("{} sent message", data),
-                Err(Signing(err)) | Err(Network(err)) => info!("error while sending {}", err),
-            }
-        });
-
+        task_manager.spawn_handle().spawn("send", outgoing);
 
 	network_starter.start_network();
 	Ok(task_manager)
