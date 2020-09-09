@@ -6783,6 +6783,7 @@ dependencies = [
  "libp2p",
  "log",
  "lru 0.4.3",
+ "parking_lot 0.10.2",
  "quickcheck",
  "rand 0.7.3",
  "sc-network",

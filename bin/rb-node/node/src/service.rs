@@ -174,10 +174,12 @@ pub fn new_full(config: Configuration) -> Result<TaskManager, ServiceError> {
 	} else {
 		None
 	};
+
+	let dummy_gossiper = sc_dummy_gossip::DummyGossiper::new(network.clone(), name.clone());
 	task_manager.spawn_essential_handle().spawn_blocking(
 			"dummy-task",
-			sc_dummy_gossip::start_dummy_gossiper(network.clone(), name.clone())
-		);
+			dummy_gossiper
+	);
 
 
 	let grandpa_config = sc_finality_grandpa::Config {

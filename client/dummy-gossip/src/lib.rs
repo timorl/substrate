@@ -10,15 +10,18 @@ use sp_runtime::{traits::{Block as BlockT}, ConsensusEngineId};
 use sc_network_gossip::{Network, Validator,ValidationResult, ValidatorContext, GossipEngine};
 //use futures::prelude::*;
 use libp2p::PeerId;
-use log::{info, trace};
+use log::info;
+//use log::trace;
 use std::{
 	sync::Arc,
-	sync::Mutex,
 };
 
-use std::time::Duration;
+use parking_lot::Mutex;
 
-use async_std::task;
+use std::{pin::Pin, task::{Context, Poll}};
+use std::time;
+//use std::time::Duration;
+
 use futures::{prelude::*};
 
 //use super::*;
@@ -26,6 +29,7 @@ use futures::{prelude::*};
 
 pub const DUMMY_ENGINE_ID: ConsensusEngineId = *b"DUMM";
 pub const DUMMY_PROTOCOL_NAME: &[u8] = b"/dummy";
+pub const SEND_INTERVAL: time::Duration = time::Duration::from_millis(2000);
 
 
 
@@ -35,38 +39,69 @@ impl<B: BlockT> Validator<B> for DummyValidator {
 		&self,
 		_context: &mut dyn ValidatorContext<B>,
 		_sender: &PeerId,
-		_data: &[u8],
+		data: &[u8],
 	) -> ValidationResult<B::Hash> {
+		info!("Do validatora doszedl message: {}", std::str::from_utf8(data).unwrap());
 		ValidationResult::ProcessAndKeep(B::Hash::default())
 	}
 }
 
 
 
-pub fn start_dummy_gossiper<B: BlockT, N>(network: N, name: String) -> impl Future<Output = ()>  where
-	N: Network<B> + Send + Sync + Clone + 'static {
-	let validator = Arc::new(DummyValidator{});
-	let mut gossip_engine = GossipEngine::new(
-		network.clone(),
-		DUMMY_ENGINE_ID,
-		DUMMY_PROTOCOL_NAME,
-		validator.clone()
-	);
-	info!("Gossiping a message from {}.", name);
-	trace!(target: "gossip","Gossiping a message from {}.", name);
-
-	let f = async move {
-		let message = name.into_bytes();
-		task::sleep(Duration::from_secs(3)).await;
-		gossip_engine.gossip_message(B::Hash::default(), message.clone(), true);
-		task::sleep(Duration::from_secs(3)).await;
-		gossip_engine.gossip_message(B::Hash::default(), message.clone(), true);
-		task::sleep(Duration::from_secs(3)).await;
-		gossip_engine.gossip_message(B::Hash::default(), message.clone(), true);
-		gossip_engine.await;
-	};
-
-	future::select(gossip_engine, f)
+pub struct DummyGossiper<B: BlockT> {
+	gossip_engine: Arc<Mutex<GossipEngine<B>>>,
+	periodic_sender: futures_timer::Delay,
+	my_name: String,
+	round: u32,
 }
+
+
+impl<B: BlockT> DummyGossiper<B> {
+	/// Create a new instance.
+	pub fn new<N: Network<B> + Send + Clone + 'static>(
+		network: N,
+		name: String,
+	) -> Self where B: 'static {
+		let validator = Arc::new(DummyValidator{});
+		let gossip_engine = Arc::new(Mutex::new(GossipEngine::new(
+			network.clone(),
+			DUMMY_ENGINE_ID,
+			DUMMY_PROTOCOL_NAME,
+			validator.clone()
+		)));
+		DummyGossiper {
+			gossip_engine: gossip_engine.clone(),
+			periodic_sender: futures_timer::Delay::new(SEND_INTERVAL),
+			my_name: name.clone(),
+			round: 0,
+		}
+	}
+}
+
+impl<B: BlockT> Future for DummyGossiper<B> {
+	type Output = ();
+
+	fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
+		let this = &mut *self;
+		match this.gossip_engine.lock().poll_unpin(cx) {
+			//gossip_engine should never return Ready(), so it would be better to return an error
+			Poll::Ready(()) => return Poll::Ready(()),
+			Poll::Pending => {},
+		}
+
+		while let Poll::Ready(()) = this.periodic_sender.poll_unpin(cx) {
+			this.periodic_sender.reset(SEND_INTERVAL);
+			this.round = this.round+1;
+			let message = format!("{} - r {}",this.my_name, this.round);
+			info!("Gossiping a message from {}.", message.clone());
+			let message_bytes = message.into_bytes();
+			this.gossip_engine.lock().gossip_message(B::Hash::default(), message_bytes, false);
+		}
+
+		Poll::Pending
+	}
+}
+
+
 
 
