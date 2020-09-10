@@ -237,7 +237,7 @@ impl<B: BlockT> Future for NetworkBridge<B> {
 
                 let new_nonce = new_nonce.unwrap();
 
-                if self.nonce.as_ref().unwrap().0 != new_nonce.0 {
+                if self.nonce.is_none() || self.nonce.as_ref().unwrap().0 != new_nonce.0 {
                     info!("received new nonce {}", new_nonce.0);
                     self.topic = Some(round_topic::<B>(new_nonce.0));
                     self.nonce = Some(new_nonce);

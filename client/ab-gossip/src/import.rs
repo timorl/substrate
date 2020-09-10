@@ -25,12 +25,23 @@ impl std::convert::From<Error> for ConsensusError {
 
 use super::Nonce;
 
-#[derive(Clone)]
 pub struct ABGossipBlockImport<B: BlockT, I, C> {
     inner: I,
     client: Arc<C>,
     randomness_nonce_tx: Sender<Nonce<B>>,
     check_inherents_after: <<B as BlockT>::Header as HeaderT>::Number,
+}
+
+impl<B: BlockT, I: Clone, C> Clone for ABGossipBlockImport<B, I, C>
+{
+    fn clone(&self) -> Self {
+        Self {
+            inner: self.inner.clone(),
+            client: self.client.clone(),
+            randomness_nonce_tx: self.randomness_nonce_tx.clone(), 
+            check_inherents_after: self.check_inherents_after.clone(),
+        }
+    }
 }
 
 impl<B, I, C> ABGossipBlockImport<B, I, C> where

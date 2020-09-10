@@ -8,7 +8,7 @@ use sp_inherents::InherentDataProviders;
 use sc_executor::native_executor_instance;
 pub use sc_executor::NativeExecutor;
 use sp_consensus_aura::sr25519::{AuthorityPair as AuraPair};
-use sc_finality_grandpa::{FinalityProofProvider as GrandpaFinalityProofProvider};
+use sc_finality_grandpa::{GrandpaBlockImport, FinalityProofProvider as GrandpaFinalityProofProvider};
 use log::info;
 use sp_core::crypto::key_types::DUMMY;
 use futures::channel::mpsc::{channel, Receiver};
@@ -31,7 +31,9 @@ pub fn new_partial(config: &Configuration) -> Result<sc_service::PartialComponen
 	FullClient, FullBackend, FullSelectChain,
 	sp_consensus::DefaultImportQueue<Block, FullClient>,
 	sc_transaction_pool::FullPool<Block, FullClient>,
-        Receiver<Nonce<Block>>,
+        (
+            Receiver<Nonce<Block>>, 
+            ABGossipBlockImport<Block, GrandpaBlockImport<FullBackend, Block, FullClient, FullSelectChain>, FullClient>)
 >, ServiceError> {
 	let inherent_data_providers = sp_inherents::InherentDataProviders::new();
 
@@ -52,17 +54,16 @@ pub fn new_partial(config: &Configuration) -> Result<sc_service::PartialComponen
 		client.clone(), &(client.clone() as Arc<_>), select_chain.clone(),
 	)?;
 
-	let aura_block_import = sc_consensus_aura::AuraBlockImport::<_, _, _, AuraPair>::new(
-		grandpa_block_import.clone(), client.clone(),
-	);
-        
         let (tx, rx) = channel(0);
-        let check_inherents_after = 1;
-        let ab_gossip_block_import = ABGossipBlockImport::new(aura_block_import.clone(), client.clone(), tx, check_inherents_after);
+        let ab_gossip_block_import = ABGossipBlockImport::new(grandpa_block_import.clone(), client.clone(), tx, 1);
+
+	let aura_block_import = sc_consensus_aura::AuraBlockImport::<_, _, _, AuraPair>::new(
+		ab_gossip_block_import.clone(), client.clone(),
+	);
 
 	let import_queue = sc_consensus_aura::import_queue::<_, _, _, AuraPair, _, _>(
 		sc_consensus_aura::slot_duration(&*client)?,
-		ab_gossip_block_import,
+		aura_block_import,
 		Some(Box::new(grandpa_block_import.clone())),
 		None,
 		client.clone(),
@@ -74,14 +75,15 @@ pub fn new_partial(config: &Configuration) -> Result<sc_service::PartialComponen
 
 	Ok(sc_service::PartialComponents {
 		client, backend, task_manager, import_queue, keystore, select_chain, transaction_pool,
-		inherent_data_providers, other: rx,
+		inherent_data_providers, other: (rx, ab_gossip_block_import)
 	})
 }
 
 /// Builds a new service for a full client.
 pub fn new_full(config: Configuration) -> Result<TaskManager, ServiceError> {
 	let sc_service::PartialComponents {
-		client, task_manager, import_queue, keystore, transaction_pool, other: randomness_nonce_rx, ..
+		client, backend, mut task_manager, select_chain, import_queue, keystore, transaction_pool, inherent_data_providers,
+                other: (randomness_nonce_rx, block_import), ..
 	} = new_partial(&config)?;
 
         let keys = (keystore.clone() as sp_core::traits::BareCryptoStorePtr).read().ed25519_public_keys(DUMMY);
@@ -94,7 +96,7 @@ pub fn new_full(config: Configuration) -> Result<TaskManager, ServiceError> {
         let name = config.network.node_name.clone();
         info!("{} key is {}", name, public);
 
-	let (network, _, _, network_starter) =
+	let (network, network_status_sinks, system_rpc_tx, network_starter) =
 		sc_service::build_network(sc_service::BuildNetworkParams {
 			config: &config,
 			client: client.clone(),
@@ -106,6 +108,67 @@ pub fn new_full(config: Configuration) -> Result<TaskManager, ServiceError> {
 			finality_proof_request_builder: None,
 			finality_proof_provider: None,
 		})?;
+	let role = config.role.clone();
+	let force_authoring = config.force_authoring;
+	let name = config.network.node_name.clone();
+	let prometheus_registry = config.prometheus_registry().cloned();
+	let telemetry_connection_sinks = sc_service::TelemetryConnectionSinks::default();
+
+	let rpc_extensions_builder = {
+		let client = client.clone();
+		let pool = transaction_pool.clone();
+
+		Box::new(move |deny_unsafe, _| {
+			let deps = crate::rpc::FullDeps {
+				client: client.clone(),
+				pool: pool.clone(),
+				deny_unsafe,
+			};
+
+			crate::rpc::create_full(deps)
+		})
+	};
+
+	sc_service::spawn_tasks(sc_service::SpawnTasksParams {
+		network: network.clone(),
+		client: client.clone(),
+		keystore: keystore.clone(),
+		task_manager: &mut task_manager,
+		transaction_pool: transaction_pool.clone(),
+		telemetry_connection_sinks: telemetry_connection_sinks.clone(),
+		rpc_extensions_builder: rpc_extensions_builder,
+		on_demand: None,
+		remote_blockchain: None,
+		backend, network_status_sinks, system_rpc_tx, config,
+	})?;
+
+	if role.is_authority() {
+		let proposer = sc_basic_authorship::ProposerFactory::new(
+			client.clone(),
+			transaction_pool,
+			prometheus_registry.as_ref(),
+		);
+
+		let can_author_with =
+			sp_consensus::CanAuthorWithNativeVersion::new(client.executor().clone());
+
+		let aura = sc_consensus_aura::start_aura::<_, _, _, _, _, AuraPair, _, _, _>(
+			sc_consensus_aura::slot_duration(&*client)?,
+			client.clone(),
+			select_chain,
+			block_import,
+			proposer,
+			network.clone(),
+			inherent_data_providers.clone(),
+			force_authoring,
+			keystore.clone(),
+			can_author_with,
+		)?;
+
+		// the AURA authoring task is considered essential, i.e. if it
+		// fails we take down the service with it.
+		task_manager.spawn_essential_handle().spawn_blocking("aura", aura);
+	}
 
         let keystore = LocalIdKeystore::from((public.into(), keystore.clone()  as sp_core::traits::BareCryptoStorePtr));
         let nb = NetworkBridge::new(name, randomness_nonce_rx, network, keystore);
