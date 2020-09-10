@@ -11,8 +11,9 @@ use sp_consensus_aura::sr25519::{AuthorityPair as AuraPair};
 use sc_finality_grandpa::{FinalityProofProvider as GrandpaFinalityProofProvider};
 use log::info;
 use sp_core::crypto::key_types::DUMMY;
+use futures::channel::mpsc::{channel, Receiver};
 
-use ab_gossip::{NetworkBridge, LocalIdKeystore};
+use ab_gossip::{NetworkBridge, LocalIdKeystore, Nonce, import::ABGossipBlockImport};
 
 
 // Our native executor instance.
@@ -30,10 +31,7 @@ pub fn new_partial(config: &Configuration) -> Result<sc_service::PartialComponen
 	FullClient, FullBackend, FullSelectChain,
 	sp_consensus::DefaultImportQueue<Block, FullClient>,
 	sc_transaction_pool::FullPool<Block, FullClient>,
-	(
-		sc_finality_grandpa::GrandpaBlockImport<FullBackend, Block, FullClient, FullSelectChain>,
-		sc_finality_grandpa::LinkHalf<Block, FullClient, FullSelectChain>
-	)
+        Receiver<Nonce<Block>>,
 >, ServiceError> {
 	let inherent_data_providers = sp_inherents::InherentDataProviders::new();
 
@@ -50,17 +48,21 @@ pub fn new_partial(config: &Configuration) -> Result<sc_service::PartialComponen
 		client.clone(),
 	);
 
-	let (grandpa_block_import, grandpa_link) = sc_finality_grandpa::block_import(
+	let (grandpa_block_import, _) = sc_finality_grandpa::block_import(
 		client.clone(), &(client.clone() as Arc<_>), select_chain.clone(),
 	)?;
 
 	let aura_block_import = sc_consensus_aura::AuraBlockImport::<_, _, _, AuraPair>::new(
 		grandpa_block_import.clone(), client.clone(),
 	);
+        
+        let (tx, rx) = channel(0);
+        let check_inherents_after = 1;
+        let ab_gossip_block_import = ABGossipBlockImport::new(aura_block_import.clone(), client.clone(), tx, check_inherents_after);
 
 	let import_queue = sc_consensus_aura::import_queue::<_, _, _, AuraPair, _, _>(
 		sc_consensus_aura::slot_duration(&*client)?,
-		aura_block_import,
+		ab_gossip_block_import,
 		Some(Box::new(grandpa_block_import.clone())),
 		None,
 		client.clone(),
@@ -72,15 +74,14 @@ pub fn new_partial(config: &Configuration) -> Result<sc_service::PartialComponen
 
 	Ok(sc_service::PartialComponents {
 		client, backend, task_manager, import_queue, keystore, select_chain, transaction_pool,
-		inherent_data_providers,
-		other: (grandpa_block_import, grandpa_link),
+		inherent_data_providers, other: rx,
 	})
 }
 
 /// Builds a new service for a full client.
 pub fn new_full(config: Configuration) -> Result<TaskManager, ServiceError> {
 	let sc_service::PartialComponents {
-		client, task_manager, import_queue, keystore, transaction_pool, ..
+		client, task_manager, import_queue, keystore, transaction_pool, other: randomness_nonce_rx, ..
 	} = new_partial(&config)?;
 
         let keys = (keystore.clone() as sp_core::traits::BareCryptoStorePtr).read().ed25519_public_keys(DUMMY);
@@ -107,7 +108,7 @@ pub fn new_full(config: Configuration) -> Result<TaskManager, ServiceError> {
 		})?;
 
         let keystore = LocalIdKeystore::from((public.into(), keystore.clone()  as sp_core::traits::BareCryptoStorePtr));
-        let nb = NetworkBridge::new(name, network, keystore);
+        let nb = NetworkBridge::new(name, randomness_nonce_rx, network, keystore);
 
         task_manager.spawn_handle().spawn("network bridge", nb);
 
