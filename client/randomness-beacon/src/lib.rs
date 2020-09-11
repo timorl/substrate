@@ -22,6 +22,8 @@ const RANDOMNESS_BEACON_ID: [u8; 4] = *b"rndb";
 const RB_PROTOCOL_NAME: &'static str = "/randomness_beacon";
 pub const SEND_INTERVAL: time::Duration = time::Duration::from_secs(1);
 
+pub type RandomBytes = i64;
+
 pub const KEY_TYPE: sp_core::crypto::KeyTypeId = sp_application_crypto::key_types::DUMMY;
 mod app {
     use sp_application_crypto::{app_crypto, ed25519, key_types::DUMMY};
@@ -56,6 +58,7 @@ impl From<(AuthorityId, BareCryptoStorePtr)> for LocalIdKeystore {
 }
 
 pub mod import;
+pub mod inherents;
 
 #[derive(Debug, Clone, Encode, Decode)]
 pub struct Message {
@@ -186,6 +189,7 @@ pub struct NetworkBridge<B: BlockT> {
     outgoing: Option<OutgoingMessage<B>>,
     randomness_nonce_rx: Receiver<Nonce<B>>,
     periodic_sender: futures_timer::Delay,
+    random_bytes: Arc<Mutex<Option<RandomBytes>>>,
 }
 
 impl<B: BlockT> Unpin for NetworkBridge<B> {}
@@ -196,6 +200,7 @@ impl<B: BlockT> NetworkBridge<B> {
         randomness_nonce_rx: Receiver<Nonce<B>>,
         network: Arc<NetworkService<B, <B as BlockT>::Hash>>,
         keystore: LocalIdKeystore,
+        random_bytes: Arc<Mutex<Option<RandomBytes>>>,
     ) -> Self {
         let validator = Arc::new(GossipValidator::new());
         let gossip_engine = Arc::new(Mutex::new(GossipEngine::new(
@@ -216,6 +221,7 @@ impl<B: BlockT> NetworkBridge<B> {
             outgoing: None,
             randomness_nonce_rx,
             periodic_sender: futures_timer::Delay::new(SEND_INTERVAL),
+            random_bytes,
         }
     }
 
@@ -308,7 +314,9 @@ impl<B: BlockT> Future for NetworkBridge<B> {
             self.incoming = Some(incoming);
             match poll {
                 Poll::Ready(Some(signed)) => {
-                    info!(target: RB_PROTOCOL_NAME, "{} received message {:?}", self.id, signed.message)
+                    info!(target: RB_PROTOCOL_NAME, "{} received message {:?}", self.id, signed.message);
+                    // combine shares and on succes put new random_bytes for InherentDataProvider
+                    *self.random_bytes.lock() = Some(1);
                 }
                 Poll::Ready(None) => info!(target: RB_PROTOCOL_NAME, "poll_next_unpin returned Ready(None) ==> investigate!"),
                 Poll::Pending => return Poll::Pending,

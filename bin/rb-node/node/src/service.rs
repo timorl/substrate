@@ -14,6 +14,7 @@ use sp_consensus_aura::sr25519::AuthorityPair as AuraPair;
 use sp_core::crypto::key_types::DUMMY;
 use sp_inherents::InherentDataProviders;
 use std::sync::Arc;
+use parking_lot::Mutex;
 
 use randomness_beacon::{import::RandomnessBeaconBlockImport, LocalIdKeystore, NetworkBridge, Nonce};
 
@@ -39,6 +40,7 @@ pub fn new_partial(
         sc_transaction_pool::FullPool<Block, FullClient>,
         (
             Receiver<Nonce<Block>>,
+            Arc<Mutex<Option<randomness_beacon::RandomBytes>>>,
             RandomnessBeaconBlockImport<
                 Block,
                 GrandpaBlockImport<FullBackend, Block, FullClient, FullSelectChain>,
@@ -70,8 +72,9 @@ pub fn new_partial(
     )?;
 
     let (tx, rx) = channel(0);
+    let random_bytes = Arc::new(Mutex::new(None));
     let ab_gossip_block_import =
-        RandomnessBeaconBlockImport::new(grandpa_block_import.clone(), client.clone(), tx, 1);
+        RandomnessBeaconBlockImport::new(grandpa_block_import.clone(), client.clone(), tx, 1, random_bytes.clone(), inherent_data_providers.clone());
 
     let aura_block_import = sc_consensus_aura::AuraBlockImport::<_, _, _, AuraPair>::new(
         ab_gossip_block_import.clone(),
@@ -99,7 +102,7 @@ pub fn new_partial(
         select_chain,
         transaction_pool,
         inherent_data_providers,
-        other: (rx, ab_gossip_block_import),
+        other: (rx, random_bytes, ab_gossip_block_import),
     })
 }
 
@@ -114,7 +117,7 @@ pub fn new_full(config: Configuration) -> Result<TaskManager, ServiceError> {
         keystore,
         transaction_pool,
         inherent_data_providers,
-        other: (randomness_nonce_rx, block_import),
+        other: (randomness_nonce_rx, random_bytes, block_import),
         ..
     } = new_partial(&config)?;
 
@@ -216,7 +219,7 @@ pub fn new_full(config: Configuration) -> Result<TaskManager, ServiceError> {
         public.into(),
         keystore.clone() as sp_core::traits::BareCryptoStorePtr,
     ));
-    let nb = NetworkBridge::new(name, randomness_nonce_rx, network, keystore);
+    let nb = NetworkBridge::new(name, randomness_nonce_rx, network, keystore, random_bytes);
 
     task_manager.spawn_handle().spawn("network bridge", nb);
 

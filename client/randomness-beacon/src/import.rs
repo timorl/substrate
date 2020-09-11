@@ -1,4 +1,5 @@
-use futures::channel::mpsc::Sender;
+use futures::channel::mpsc::{Sender};
+use parking_lot::Mutex;
 use log::info;
 use sc_client_api::{backend::AuxStore, BlockOf};
 use sp_api::ProvideRuntimeApi;
@@ -7,9 +8,9 @@ use sp_blockchain::{well_known_cache_keys::Id as CacheKeyId, HeaderBackend, Prov
 use sp_consensus::{
     BlockCheckParams, BlockImport, BlockImportParams, Error as ConsensusError, ImportResult,
 };
-use sp_inherents::InherentData;
 use sp_runtime::traits::{Block as BlockT, Header as HeaderT};
 use std::{collections::HashMap, sync::Arc};
+use sp_inherents::{InherentDataProviders, InherentData};
 
 #[derive(derive_more::Display, Debug)]
 pub enum Error {
@@ -22,7 +23,9 @@ impl std::convert::From<Error> for ConsensusError {
     }
 }
 
-use super::Nonce;
+use super::{Nonce, RandomBytes};
+use super::inherents::register_rb_inherent_data_provider;
+
 
 pub struct RandomnessBeaconBlockImport<B: BlockT, I, C> {
     inner: I,
@@ -55,7 +58,12 @@ where
         client: Arc<C>,
         randomness_nonce_tx: Sender<Nonce<B>>,
         check_inherents_after: <<B as BlockT>::Header as HeaderT>::Number,
+        random_bytes: Arc<Mutex<Option<RandomBytes>>>,
+	inherent_data_providers: InherentDataProviders,
     ) -> Self {
+
+	register_rb_inherent_data_provider(&inherent_data_providers, random_bytes);
+
         Self {
             inner,
             client,
