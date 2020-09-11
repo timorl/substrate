@@ -5870,6 +5870,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "randomness-beacon"
+version = "0.1.0"
+
+[[package]]
 name = "raw-cpuid"
 version = "7.0.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
