@@ -8,13 +8,15 @@ use std::sync::Arc;
 use codec::Decode;
 use sp_inherents::{InherentDataProviders, ProvideInherentData, InherentIdentifier, InherentData};
 
-use super::RandomBytes;
+use super::{RandomBytes, Nonce};
 pub const INHERENT_IDENTIFIER: InherentIdentifier = *b"randbecn";
-pub type InherentType = RandomBytes;
+// TODO: Nonce should be a hash so that Randomness-Beacon Pallet may choose the right one, but we
+// cannot make InherentType generic over BlockT. Figureout how to do it.
+pub type InherentType = Vec<(Nonce, RandomBytes)>;
 
 #[cfg(feature = "std")]
 pub struct InherentDataProvider{
-        random_bytes: Arc<Mutex<Option<RandomBytes>>>,
+        random_bytes: Arc<Mutex<InherentType>>,
 }
 
 #[cfg(feature = "std")]
@@ -28,7 +30,7 @@ impl ProvideInherentData for InherentDataProvider {
 		inherent_data: &mut InherentData,
 	) -> Result<(), sp_inherents::Error> {
                 // probably here should be logic for wating for next random bytes
-                if let Some(id) = *self.random_bytes.lock() {
+                if let id = *self.random_bytes.lock() {
 		    inherent_data.put_data(INHERENT_IDENTIFIER, &id)
                 } else {
                     return Err("Didn't receive new random bytes".into());
@@ -44,7 +46,7 @@ impl ProvideInherentData for InherentDataProvider {
 /// Register the RndB inherent data provider, if not registered already.
 pub fn register_rb_inherent_data_provider(
 	inherent_data_providers: &InherentDataProviders,
-        random_bytes: Arc<Mutex<Option<RandomBytes>>>,
+        random_bytes: Arc<Mutex<InherentType>>,
 ){
 	if !inherent_data_providers.has_provider(&INHERENT_IDENTIFIER) {
                 // always succeds due to the above check

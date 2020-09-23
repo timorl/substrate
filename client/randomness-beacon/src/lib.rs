@@ -23,6 +23,9 @@ const RB_PROTOCOL_NAME: &'static str = "/randomness_beacon";
 pub const SEND_INTERVAL: time::Duration = time::Duration::from_secs(1);
 
 pub type RandomBytes = i64;
+// TODO: Nonce should be a hash so that Randomness-Beacon Pallet may choose the right one, but we
+// cannot make InherentType generic over BlockT. Figureout how to do it.
+pub type Nonce = i64;
 
 pub const KEY_TYPE: sp_core::crypto::KeyTypeId = sp_application_crypto::key_types::DUMMY;
 mod app {
@@ -59,6 +62,7 @@ impl From<(AuthorityId, BareCryptoStorePtr)> for LocalIdKeystore {
 
 pub mod import;
 pub mod inherents;
+pub mod keybox;
 
 #[derive(Debug, Clone, Encode, Decode)]
 pub struct Message {
@@ -154,8 +158,6 @@ impl<B: BlockT> Validator<B> for GossipValidator {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
-pub struct Nonce<B: BlockT>(u8, <B as BlockT>::Hash);
 
 #[derive(Clone)]
 pub struct OutgoingMessage<B: BlockT> {
@@ -181,13 +183,13 @@ impl<B: BlockT> OutgoingMessage<B> {
 pub struct NetworkBridge<B: BlockT> {
     id: String,
     topic: Option<B::Hash>,
-    nonce: Option<Nonce<B>>,
+    nonce: Option<Nonce>,
     keystore: LocalIdKeystore,
     gossip_engine: Arc<Mutex<GossipEngine<B>>>,
     validator: Arc<GossipValidator>,
     incoming: Option<Receiver<TopicNotification>>,
     outgoing: Option<OutgoingMessage<B>>,
-    randomness_nonce_rx: Receiver<Nonce<B>>,
+    randomness_nonce_rx: Receiver<Nonce>,
     periodic_sender: futures_timer::Delay,
     random_bytes: Arc<Mutex<Option<RandomBytes>>>,
 }
@@ -197,7 +199,7 @@ impl<B: BlockT> Unpin for NetworkBridge<B> {}
 impl<B: BlockT> NetworkBridge<B> {
     pub fn new(
         id: String,
-        randomness_nonce_rx: Receiver<Nonce<B>>,
+        randomness_nonce_rx: Receiver<Nonce>,
         network: Arc<NetworkService<B, <B as BlockT>::Hash>>,
         keystore: LocalIdKeystore,
         random_bytes: Arc<Mutex<Option<RandomBytes>>>,
@@ -231,7 +233,7 @@ impl<B: BlockT> NetworkBridge<B> {
 
     fn round_communication(
         &self,
-        nonce: &Nonce<B>,
+        nonce: &Nonce,
     ) -> (Receiver<TopicNotification>, OutgoingMessage<B>) {
         let round = nonce.0;
         self.note_round(round);
