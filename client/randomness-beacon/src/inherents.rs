@@ -3,6 +3,7 @@
 #[cfg(feature = "std")]
 use parking_lot::Mutex;
 use std::sync::Arc;
+use log::info;
 
 #[cfg(feature = "std")]
 use codec::Decode;
@@ -29,12 +30,9 @@ impl ProvideInherentData for InherentDataProvider {
 		&self,
 		inherent_data: &mut InherentData,
 	) -> Result<(), sp_inherents::Error> {
-                // probably here should be logic for wating for next random bytes
-                if let id = *self.random_bytes.lock() {
-		    inherent_data.put_data(INHERENT_IDENTIFIER, &id)
-                } else {
-                    return Err("Didn't receive new random bytes".into());
-                }
+                let id = (*self.random_bytes.lock()).clone();
+                info!(target: "inherents", "created inherents {:?}", id);
+		inherent_data.put_data(INHERENT_IDENTIFIER, &id)
         }
 
 	fn error_to_string(&self, error: &[u8]) -> Option<String> {

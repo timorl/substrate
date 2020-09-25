@@ -7,7 +7,7 @@ use sc_network_gossip::{
 };
 
 use sp_core::traits::BareCryptoStorePtr;
-use sp_runtime::traits::{Block as BlockT, Hash as HashT, Header as HeaderT};
+use sp_runtime::traits::Block as BlockT;
 
 use futures::{channel::mpsc::Receiver, prelude::*};
 use parking_lot::{Mutex, RwLock};
@@ -25,7 +25,7 @@ pub const SEND_INTERVAL: time::Duration = time::Duration::from_secs(1);
 pub type RandomBytes = i64;
 // TODO: Nonce should be a hash so that Randomness-Beacon Pallet may choose the right one, but we
 // cannot make InherentType generic over BlockT. Figureout how to do it.
-pub type Nonce = i64;
+pub type Nonce = Vec<u8>;
 
 pub const KEY_TYPE: sp_core::crypto::KeyTypeId = sp_application_crypto::key_types::DUMMY;
 mod app {
@@ -66,7 +66,7 @@ pub mod keybox;
 
 #[derive(Debug, Clone, Encode, Decode)]
 pub struct Message {
-    pub data: String,
+    pub data: RandomBytes,
 }
 
 impl Message {
@@ -108,12 +108,13 @@ pub struct SignedMessage {
 
 #[derive(Debug, Encode, Decode)]
 pub struct GossipMessage {
-    pub round: u8,
+    pub nonce: Nonce,
     pub message: SignedMessage,
 }
 
-fn round_topic<B: BlockT>(round: u8) -> B::Hash {
-    <<B::Header as HeaderT>::Hashing as HashT>::hash(round.to_string().as_bytes())
+fn round_topic<B: BlockT>(nonce: Nonce) -> B::Hash {
+    //B::Hash::decode(&mut nonce.to_vec()).unwrap()
+    B::Hash::decode(&mut &*nonce).unwrap()
 }
 
 pub struct GossipValidator {
@@ -147,7 +148,7 @@ impl<B: BlockT> Validator<B> for GossipValidator {
     ) -> ValidationResult<B::Hash> {
         match GossipMessage::decode(&mut data.clone()) {
             Ok(gm) => {
-                let topic = round_topic::<B>(gm.round);
+                let topic = round_topic::<B>(gm.nonce);
                 ValidationResult::ProcessAndKeep(topic)
             }
             Err(e) => {
@@ -161,7 +162,7 @@ impl<B: BlockT> Validator<B> for GossipValidator {
 
 #[derive(Clone)]
 pub struct OutgoingMessage<B: BlockT> {
-    round: u8,
+    nonce: Nonce,
     msg: SignedMessage,
     gossip_engine: Arc<Mutex<GossipEngine<B>>>,
 }
@@ -169,10 +170,10 @@ pub struct OutgoingMessage<B: BlockT> {
 impl<B: BlockT> OutgoingMessage<B> {
     fn send(&self) {
         let message = GossipMessage {
-            round: self.round,
+            nonce: self.nonce.clone(),
             message: self.msg.clone(),
         };
-        let topic = round_topic::<B>(self.round);
+        let topic = round_topic::<B>(self.nonce.clone());
         self.gossip_engine
             .lock()
             .gossip_message(topic, message.encode(), true);
@@ -181,7 +182,7 @@ impl<B: BlockT> OutgoingMessage<B> {
 }
 
 pub struct NetworkBridge<B: BlockT> {
-    id: String,
+    id: i64,
     topic: Option<B::Hash>,
     nonce: Option<Nonce>,
     keystore: LocalIdKeystore,
@@ -191,7 +192,7 @@ pub struct NetworkBridge<B: BlockT> {
     outgoing: Option<OutgoingMessage<B>>,
     randomness_nonce_rx: Receiver<Nonce>,
     periodic_sender: futures_timer::Delay,
-    random_bytes: Arc<Mutex<Option<RandomBytes>>>,
+    random_bytes: Arc<Mutex<inherents::InherentType>>,
 }
 
 impl<B: BlockT> Unpin for NetworkBridge<B> {}
@@ -202,7 +203,7 @@ impl<B: BlockT> NetworkBridge<B> {
         randomness_nonce_rx: Receiver<Nonce>,
         network: Arc<NetworkService<B, <B as BlockT>::Hash>>,
         keystore: LocalIdKeystore,
-        random_bytes: Arc<Mutex<Option<RandomBytes>>>,
+        random_bytes: Arc<Mutex<inherents::InherentType>>,
     ) -> Self {
         let validator = Arc::new(GossipValidator::new());
         let gossip_engine = Arc::new(Mutex::new(GossipEngine::new(
@@ -213,7 +214,7 @@ impl<B: BlockT> NetworkBridge<B> {
         )));
 
         NetworkBridge {
-            id,
+            id: if id == "Alice" {0} else {1},
             topic: None,
             nonce: None,
             keystore,
@@ -233,19 +234,20 @@ impl<B: BlockT> NetworkBridge<B> {
 
     fn round_communication(
         &self,
-        nonce: &Nonce,
+        nonce: Nonce,
     ) -> (Receiver<TopicNotification>, OutgoingMessage<B>) {
-        let round = nonce.0;
+        // TODO: how to choose rounds?
+        let round = 0;
         self.note_round(round);
-        let topic = round_topic::<B>(round);
+        let topic = round_topic::<B>(nonce.clone());
 
         let incoming = self.gossip_engine.lock().messages_for(topic).
             filter_map(move |notification| {
                 let decoded = GossipMessage::decode(&mut &notification.message[..]);
                 match decoded {
                     Ok(gm) => {
-                        info!(target: RB_PROTOCOL_NAME, "received messege {:?}", gm.message.message);
-                        future::ready(Some(gm.message))
+                        // Some filtering may happen here
+                        future::ready(Some(gm))
                     }
                     Err(ref e) => {
                         info!(target: RB_PROTOCOL_NAME, "Skipping malformed message {:?}: {}", notification, e);
@@ -255,7 +257,7 @@ impl<B: BlockT> NetworkBridge<B> {
             }).into_inner();
 
         let msg = Message {
-            data: round.to_string(),
+            data: self.id,
         };
         let msg = msg
             .sign(self.keystore.local_id().clone(), self.keystore.as_ref())
@@ -263,7 +265,7 @@ impl<B: BlockT> NetworkBridge<B> {
 
         let outgoing = OutgoingMessage::<B> {
             msg,
-            round,
+            nonce: nonce,
             gossip_engine: self.gossip_engine.clone(),
         };
 
@@ -293,14 +295,15 @@ impl<B: BlockT> Future for NetworkBridge<B> {
 
         let new_nonce = new_nonce.unwrap();
 
-        if self.nonce.is_none() || self.nonce.as_ref().unwrap().0 != new_nonce.0 {
-            info!(target: RB_PROTOCOL_NAME, "received new nonce {}", new_nonce.0);
-            self.topic = Some(round_topic::<B>(new_nonce.0));
+        if self.nonce.is_none() || self.nonce.as_ref().unwrap()[..] != new_nonce[..] {
+            info!(target: RB_PROTOCOL_NAME, "received new nonce {:?}", new_nonce);
+            self.topic = Some(round_topic::<B>(new_nonce.clone()));
             self.nonce = Some(new_nonce);
         }
 
         if let None = self.incoming {
-            let (incoming, outgoing) = self.round_communication(self.nonce.as_ref().unwrap());
+            let nonce = (*self.nonce.as_ref().unwrap()).clone();
+            let (incoming, outgoing) = self.round_communication(nonce);
             self.incoming = Some(incoming);
             self.outgoing = Some(outgoing);
         }
@@ -315,10 +318,11 @@ impl<B: BlockT> Future for NetworkBridge<B> {
             let poll = incoming.poll_next_unpin(cx);
             self.incoming = Some(incoming);
             match poll {
-                Poll::Ready(Some(signed)) => {
-                    info!(target: RB_PROTOCOL_NAME, "{} received message {:?}", self.id, signed.message);
+                Poll::Ready(Some(notification)) => {
+                    let GossipMessage{nonce, message} = GossipMessage::decode(&mut &notification.message[..]).unwrap();
+                    info!(target: RB_PROTOCOL_NAME, "{} received message {:?}", self.id, message.message);
                     // combine shares and on succes put new random_bytes for InherentDataProvider
-                    *self.random_bytes.lock() = Some(1);
+                    self.random_bytes.lock().push((nonce, message.message.data));
                 }
                 Poll::Ready(None) => info!(target: RB_PROTOCOL_NAME, "poll_next_unpin returned Ready(None) ==> investigate!"),
                 Poll::Pending => return Poll::Pending,

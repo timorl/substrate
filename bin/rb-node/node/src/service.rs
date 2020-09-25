@@ -16,7 +16,10 @@ use sp_inherents::InherentDataProviders;
 use std::sync::Arc;
 use parking_lot::Mutex;
 
-use randomness_beacon::{import::RandomnessBeaconBlockImport, LocalIdKeystore, NetworkBridge, Nonce};
+use randomness_beacon::{
+    import::RandomnessBeaconBlockImport, LocalIdKeystore, NetworkBridge, Nonce,
+    inherents::InherentType,
+};
 
 // Our native executor instance.
 native_executor_instance!(
@@ -39,8 +42,8 @@ pub fn new_partial(
         sp_consensus::DefaultImportQueue<Block, FullClient>,
         sc_transaction_pool::FullPool<Block, FullClient>,
         (
-            Receiver<Nonce<Block>>,
-            Arc<Mutex<Option<randomness_beacon::RandomBytes>>>,
+            Receiver<Nonce>,
+            Arc<Mutex<InherentType>>,
             RandomnessBeaconBlockImport<
                 Block,
                 GrandpaBlockImport<FullBackend, Block, FullClient, FullSelectChain>,
@@ -71,13 +74,18 @@ pub fn new_partial(
         select_chain.clone(),
     )?;
 
-    let (tx, rx) = channel(0);
-    let random_bytes = Arc::new(Mutex::new(None));
-    let ab_gossip_block_import =
-        RandomnessBeaconBlockImport::new(grandpa_block_import.clone(), client.clone(), tx, 1, random_bytes.clone(), inherent_data_providers.clone());
-
+    let (tx, rx) = channel(10);
+    let random_bytes = Arc::new(Mutex::new(Vec::new()));
+    let rb_gossip_block_import = RandomnessBeaconBlockImport::new(
+            grandpa_block_import.clone(),
+            client.clone(),
+            tx,
+            1,
+            random_bytes.clone(),
+            inherent_data_providers.clone()
+    );
     let aura_block_import = sc_consensus_aura::AuraBlockImport::<_, _, _, AuraPair>::new(
-        ab_gossip_block_import.clone(),
+        rb_gossip_block_import.clone(),
         client.clone(),
     );
 
@@ -102,7 +110,7 @@ pub fn new_partial(
         select_chain,
         transaction_pool,
         inherent_data_providers,
-        other: (rx, random_bytes, ab_gossip_block_import),
+        other: (rx, random_bytes, rb_gossip_block_import),
     })
 }
 
