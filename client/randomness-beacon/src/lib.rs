@@ -12,6 +12,7 @@ use sp_runtime::traits::Block as BlockT;
 use futures::{channel::mpsc::Receiver, prelude::*};
 use parking_lot::{Mutex, RwLock};
 use std::{
+    collections::HashMap,
     pin::Pin,
     sync::Arc,
     task::{Context, Poll},
@@ -177,21 +178,16 @@ impl<B: BlockT> OutgoingMessage<B> {
         self.gossip_engine
             .lock()
             .gossip_message(topic, message.encode(), true);
-        info!(target: RB_PROTOCOL_NAME, "sent message");
     }
 }
 
 pub struct NetworkBridge<B: BlockT> {
     id: i64,
-    topic: Option<B::Hash>,
-    nonce: Option<Nonce>,
+    topics: HashMap<B::Hash, (Receiver<TopicNotification>, OutgoingMessage<B>, futures_timer::Delay)>,
     keystore: LocalIdKeystore,
     gossip_engine: Arc<Mutex<GossipEngine<B>>>,
     validator: Arc<GossipValidator>,
-    incoming: Option<Receiver<TopicNotification>>,
-    outgoing: Option<OutgoingMessage<B>>,
     randomness_nonce_rx: Receiver<Nonce>,
-    periodic_sender: futures_timer::Delay,
     random_bytes: Arc<Mutex<inherents::InherentType>>,
 }
 
@@ -215,15 +211,11 @@ impl<B: BlockT> NetworkBridge<B> {
 
         NetworkBridge {
             id: if id == "Alice" {0} else {1},
-            topic: None,
-            nonce: None,
+            topics: HashMap::new(),
             keystore,
             gossip_engine,
             validator,
-            incoming: None,
-            outgoing: None,
             randomness_nonce_rx,
-            periodic_sender: futures_timer::Delay::new(SEND_INTERVAL),
             random_bytes,
         }
     }
@@ -288,45 +280,51 @@ impl<B: BlockT> Future for NetworkBridge<B> {
             Poll::Ready(new_nonce) => new_nonce, // probably sth else in final version
         };
 
-        if self.topic.is_none() && new_nonce.is_none() {
+        if !new_nonce.is_none() {
+            let new_nonce = new_nonce.unwrap();
+            let topic = round_topic::<B>(new_nonce.clone());
+            // received new nonce, start collecting signatures for it
+            // TODO: some throttling
+            if !self.topics.contains_key(&topic) {
+                info!(target: RB_PROTOCOL_NAME, "received new nonce {:?}", new_nonce);
+                let (incoming, outgoing) = self.round_communication(new_nonce);
+                let periodic_sender = futures_timer::Delay::new(SEND_INTERVAL);
+                self.topics.insert(topic, (incoming, outgoing, periodic_sender));
+            }
+        }
+
+        // TODO: add a mechanism for clearing old topics
+        if self.topics.is_empty() {
             info!(target: RB_PROTOCOL_NAME, "network bridge didn't receive a first topic");
             return Poll::Pending;
         }
 
-        let new_nonce = new_nonce.unwrap();
+        // TODO: refactor this awful borrow checker hack
+        let id = self.id;
+        let random_bytes = self.random_bytes.clone();
 
-        if self.nonce.is_none() || self.nonce.as_ref().unwrap()[..] != new_nonce[..] {
-            info!(target: RB_PROTOCOL_NAME, "received new nonce {:?}", new_nonce);
-            self.topic = Some(round_topic::<B>(new_nonce.clone()));
-            self.nonce = Some(new_nonce);
-        }
+        // TODO: maybe parallelize
+        for (_, (incoming, outgoing, periodic_sender)) in self.topics.iter_mut(){
+            while let Poll::Ready(()) = periodic_sender.poll_unpin(cx) {
+                periodic_sender.reset(SEND_INTERVAL);
+                outgoing.send();
+            }
 
-        if let None = self.incoming {
-            let nonce = (*self.nonce.as_ref().unwrap()).clone();
-            let (incoming, outgoing) = self.round_communication(nonce);
-            self.incoming = Some(incoming);
-            self.outgoing = Some(outgoing);
-        }
-
-        while let Poll::Ready(()) = self.periodic_sender.poll_unpin(cx) {
-            self.periodic_sender.reset(SEND_INTERVAL);
-            info!(target: RB_PROTOCOL_NAME, "trynig to send msg");
-            self.outgoing.as_ref().unwrap().send();
-        }
-
-        if let Some(mut incoming) = self.incoming.take() {
             let poll = incoming.poll_next_unpin(cx);
-            self.incoming = Some(incoming);
             match poll {
                 Poll::Ready(Some(notification)) => {
                     let GossipMessage{nonce, message} = GossipMessage::decode(&mut &notification.message[..]).unwrap();
-                    info!(target: RB_PROTOCOL_NAME, "{} received message {:?}", self.id, message.message);
+                    info!(target: RB_PROTOCOL_NAME, "{} received message {:?}", id, message.message);
                     // combine shares and on succes put new random_bytes for InherentDataProvider
-                    self.random_bytes.lock().push((nonce, message.message.data));
+                    random_bytes.lock().push((nonce, message.message.data));
                 }
                 Poll::Ready(None) => info!(target: RB_PROTOCOL_NAME, "poll_next_unpin returned Ready(None) ==> investigate!"),
-                Poll::Pending => return Poll::Pending,
+                Poll::Pending => {},
             }
+        }
+
+        if !self.topics.is_empty() {
+            return Poll::Pending;
         }
 
         Poll::Ready(())
