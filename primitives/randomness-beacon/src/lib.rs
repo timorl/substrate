@@ -4,7 +4,6 @@ use codec::Encode;
 use sp_std::vec::Vec;
 
 #[cfg(feature = "std")]
-use log::info;
 #[cfg(feature = "std")]
 use sp_std::sync::Arc;
 #[cfg(feature = "std")]
@@ -52,7 +51,6 @@ impl ProvideInherentData for InherentDataProvider {
         inherent_data: &mut InherentData,
     ) -> Result<(), sp_inherents::Error> {
         let id = (*self.random_bytes.lock()).clone();
-        info!(target: "inherents", "created inherents {:?}", id);
         inherent_data.put_data(INHERENT_IDENTIFIER, &id)
     }
 

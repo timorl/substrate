@@ -15,53 +15,53 @@ targets = ["x86_64-unknown-linux-gnu"]
 
 [dependencies]
 derive_more = "0.99.2"
-fork-tree = { version = "2.0.0-rc6", path = "../../utils/fork-tree" }
+fork-tree = { version = "2.0.0", path = "../../utils/fork-tree" }
 futures = "0.3.4"
 futures-sink = "0.3.4"
 futures-timer = "3.0.1"
 parking_lot = "0.10.0"
 rand = "0.7.2"
 codec = { package = "parity-scale-codec", version = "1.3.1", default-features = false, features = ["derive"] }
-sp-arithmetic = { version = "2.0.0-rc6", path = "../../primitives/arithmetic" }
-sp-block-builder = { version = "2.0.0-rc6", path = "../../primitives/block-builder" }
-sp-utils = { version = "2.0.0-rc6", path = "../../primitives/utils" }
-sp-consensus = { version = "0.8.0-rc6", path = "../../primitives/consensus/common" }
-sc-consensus = { version = "0.8.0-rc6", path = "../../client/consensus/common" }
-sc-telemetry = { version = "2.0.0-rc6", path = "../telemetry" }
-sc-keystore = { version = "2.0.0-rc6", path = "../keystore" }
+sp-arithmetic = { version = "2.0.0", path = "../../primitives/arithmetic" }
+sp-block-builder = { version = "2.0.0", path = "../../primitives/block-builder" }
+sp-utils = { version = "2.0.0", path = "../../primitives/utils" }
+sp-consensus = { version = "0.8.0", path = "../../primitives/consensus/common" }
+sc-consensus = { version = "0.8.0", path = "../../client/consensus/common" }
+sc-telemetry = { version = "2.0.0", path = "../telemetry" }
+sc-keystore = { version = "2.0.0", path = "../keystore" }
 serde_json = "1.0.41"
-sc-client-api = { version = "2.0.0-rc6", path = "../api" }
-sp-inherents = { version = "2.0.0-rc6", path = "../../primitives/inherents" }
-sp-blockchain = { version = "2.0.0-rc6", path = "../../primitives/blockchain" }
-sp-randomness-beacon= { version = "2.0.0-rc6", path = "../../primitives/randomness-beacon" }
-sc-network = { version = "0.8.0-rc6", path = "../network" }
-sc-network-gossip = { version = "0.8.0-rc6", path = "../network-gossip" }
-sp-finality-tracker = { version = "2.0.0-rc6", path = "../../primitives/finality-tracker" }
-prometheus-endpoint = { package = "substrate-prometheus-endpoint", path = "../../utils/prometheus", version = "0.8.0-rc6"}
-sc-block-builder = { version = "0.8.0-rc6", path = "../block-builder" }
+sc-client-api = { version = "2.0.0", path = "../api" }
+sp-inherents = { version = "2.0.0", path = "../../primitives/inherents" }
+sp-blockchain = { version = "2.0.0", path = "../../primitives/blockchain" }
+sp-randomness-beacon= { version = "2.0.0", path = "../../primitives/randomness-beacon" }
+sc-network = { version = "0.8.0", path = "../network" }
+sc-network-gossip = { version = "0.8.0", path = "../network-gossip" }
+sp-finality-tracker = { version = "2.0.0", path = "../../primitives/finality-tracker" }
+prometheus-endpoint = { package = "substrate-prometheus-endpoint", path = "../../utils/prometheus", version = "0.8.0"}
+sc-block-builder = { version = "0.8.0", path = "../block-builder" }
 pin-project = "0.4.6"
 
-sp-application-crypto = { version = "2.0.0-rc6", default-features = false, path = "../../primitives/application-crypto" }
+sp-application-crypto = { version = "2.0.0", default-features = false, path = "../../primitives/application-crypto" }
 log = { version = "0.4.8", optional = true }
 serde = { version = "1.0.101", optional = true, features = ["derive"] }
-sp-api = { version = "2.0.0-rc6", default-features = false, path = "../../primitives/api" }
-sp-core = { version = "2.0.0-rc6", default-features = false, path = "../../primitives/core" }
-sp-runtime = { version = "2.0.0-rc6", default-features = false, path = "../../primitives/runtime" }
-sp-std = { version = "2.0.0-rc6", default-features = false, path = "../../primitives/std" }
+sp-api = { version = "2.0.0", default-features = false, path = "../../primitives/api" }
+sp-core = { version = "2.0.0", default-features = false, path = "../../primitives/core" }
+sp-runtime = { version = "2.0.0", default-features = false, path = "../../primitives/runtime" }
+sp-std = { version = "2.0.0", default-features = false, path = "../../primitives/std" }
 
 [dev-dependencies]
 assert_matches = "1.3.0"
 codec = { package = "parity-scale-codec", version = "1.3.1", default-features = false, features = ["derive"] }
-sc-network = { version = "0.8.0-rc6", path = "../network" }
-sc-network-test = { version = "0.8.0-rc6", path = "../network/test" }
-sp-keyring = { version = "2.0.0-rc6", path = "../../primitives/keyring" }
-substrate-test-runtime-client = { version = "2.0.0-rc6",  path = "../../test-utils/runtime/client" }
-sp-consensus-babe = { version = "0.8.0-rc6", path = "../../primitives/consensus/babe" }
-sp-state-machine = { version = "0.8.0-rc6", path = "../../primitives/state-machine" }
+sc-network = { version = "0.8.0", path = "../network" }
+sc-network-test = { version = "0.8.0", path = "../network/test" }
+sp-keyring = { version = "2.0.0", path = "../../primitives/keyring" }
+substrate-test-runtime-client = { version = "2.0.0",  path = "../../test-utils/runtime/client" }
+sp-consensus-babe = { version = "0.8.0", path = "../../primitives/consensus/babe" }
+sp-state-machine = { version = "0.8.0", path = "../../primitives/state-machine" }
 env_logger = "0.7.0"
 tokio = { version = "0.2", features = ["rt-core"] }
 tempfile = "3.1.0"
-sp-api = { version = "2.0.0-rc6", path = "../../primitives/api" }
+sp-api = { version = "2.0.0", path = "../../primitives/api" }
 
 [features]
 default = ["std"]
