@@ -16,10 +16,8 @@ use sp_inherents::InherentDataProviders;
 use std::sync::Arc;
 use parking_lot::Mutex;
 
-use randomness_beacon::{
-    import::RandomnessBeaconBlockImport, LocalIdKeystore, NetworkBridge, Nonce,
-    inherents::InherentType,
-};
+use randomness_beacon::{import::RandomnessBeaconBlockImport, LocalIdKeystore, NetworkBridge, Nonce};
+use sp_randomness_beacon::InherentType;
 
 // Our native executor instance.
 native_executor_instance!(
@@ -82,7 +80,7 @@ pub fn new_partial(
             tx,
             1,
             random_bytes.clone(),
-            inherent_data_providers.clone()
+            inherent_data_providers.clone(),
     );
     let aura_block_import = sc_consensus_aura::AuraBlockImport::<_, _, _, AuraPair>::new(
         rb_gossip_block_import.clone(),

@@ -2556,12 +2556,25 @@ dependencies = [
  "failure",
  "futures 0.1.29",
  "hyper 0.12.35",
- "jsonrpc-core",
+ "jsonrpc-core 15.0.0",
  "jsonrpc-pubsub",
  "log",
  "serde",
  "serde_json",
  "url 1.7.2",
+]
+
+[[package]]
+name = "jsonrpc-core"
+version = "14.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a0747307121ffb9703afd93afbd0fb4f854c38fb873f2c8b90e0e902f27c7b62"
+dependencies = [
+ "futures 0.1.29",
+ "log",
+ "serde",
+ "serde_derive",
+ "serde_json",
 ]
 
 [[package]]
@@ -2605,7 +2618,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9996b26c0c7a59626d0ed6c5ec8bf06218e62ce1474bd2849f9b9fd38a0158c0"
 dependencies = [
  "hyper 0.12.35",
- "jsonrpc-core",
+ "jsonrpc-core 15.0.0",
  "jsonrpc-server-utils",
  "log",
  "net2",
@@ -2619,7 +2632,7 @@ version = "15.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b8e8f2278fb2b277175b6e21b23e7ecf30e78daff5ee301d0a2a411d9a821a0a"
 dependencies = [
- "jsonrpc-core",
+ "jsonrpc-core 15.0.0",
  "jsonrpc-server-utils",
  "log",
  "parity-tokio-ipc",
@@ -2633,7 +2646,7 @@ version = "15.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f389c5cd1f3db258a99296892c21047e21ae73ff4c0e2d39650ea86fe994b4c7"
 dependencies = [
- "jsonrpc-core",
+ "jsonrpc-core 15.0.0",
  "log",
  "parking_lot 0.10.2",
  "rand 0.7.3",
@@ -2648,7 +2661,7 @@ checksum = "c623e1895d0d9110cb0ea7736cfff13191ff52335ad33b21bd5c775ea98b27af"
 dependencies = [
  "bytes 0.4.12",
  "globset",
- "jsonrpc-core",
+ "jsonrpc-core 15.0.0",
  "lazy_static",
  "log",
  "tokio 0.1.22",
@@ -2662,7 +2675,7 @@ version = "15.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "436a92034d0137ab3e3c64a7a6350b428f31cb4d7d1a89f284bcdbcd98a7bc56"
 dependencies = [
- "jsonrpc-core",
+ "jsonrpc-core 15.0.0",
  "jsonrpc-server-utils",
  "log",
  "parity-ws",
@@ -3709,7 +3722,7 @@ version = "2.0.0"
 dependencies = [
  "futures 0.3.5",
  "futures-timer 3.0.2",
- "jsonrpc-core",
+ "jsonrpc-core 15.0.0",
  "libp2p",
  "node-cli",
  "sc-rpc-api",
@@ -3862,7 +3875,7 @@ dependencies = [
 name = "node-rpc"
 version = "2.0.0"
 dependencies = [
- "jsonrpc-core",
+ "jsonrpc-core 15.0.0",
  "node-primitives",
  "node-runtime",
  "pallet-contracts-rpc",
@@ -3974,7 +3987,7 @@ version = "2.0.0"
 dependencies = [
  "frame-benchmarking",
  "frame-benchmarking-cli",
- "jsonrpc-core",
+ "jsonrpc-core 15.0.0",
  "node-template-runtime",
  "pallet-transaction-payment-rpc",
  "sc-basic-authorship",
@@ -4434,7 +4447,7 @@ dependencies = [
 name = "pallet-contracts-rpc"
 version = "0.8.0"
 dependencies = [
- "jsonrpc-core",
+ "jsonrpc-core 15.0.0",
  "jsonrpc-core-client",
  "jsonrpc-derive",
  "pallet-contracts-primitives",
@@ -5049,7 +5062,7 @@ dependencies = [
 name = "pallet-transaction-payment-rpc"
 version = "2.0.0"
 dependencies = [
- "jsonrpc-core",
+ "jsonrpc-core 15.0.0",
  "jsonrpc-core-client",
  "jsonrpc-derive",
  "pallet-transaction-payment-rpc-runtime-api",
@@ -6058,7 +6071,7 @@ dependencies = [
  "async-std",
  "futures 0.3.5",
  "futures-sink",
- "jsonrpc-core",
+ "jsonrpc-core 14.2.0",
  "log",
  "pallet-transaction-payment-rpc",
  "parking_lot 0.10.2",
@@ -6102,6 +6115,7 @@ dependencies = [
  "pallet-aura",
  "pallet-balances",
  "pallet-grandpa",
+ "pallet-randomness-beacon",
  "pallet-randomness-collective-flip",
  "pallet-sudo",
  "pallet-timestamp",
@@ -6751,7 +6765,7 @@ version = "0.8.0"
 dependencies = [
  "derive_more",
  "futures 0.3.5",
- "jsonrpc-core",
+ "jsonrpc-core 15.0.0",
  "jsonrpc-core-client",
  "jsonrpc-derive",
  "sc-consensus",
@@ -6792,7 +6806,7 @@ dependencies = [
  "assert_matches",
  "derive_more",
  "futures 0.3.5",
- "jsonrpc-core",
+ "jsonrpc-core 15.0.0",
  "jsonrpc-core-client",
  "jsonrpc-derive",
  "log",
@@ -7018,7 +7032,7 @@ dependencies = [
  "derive_more",
  "finality-grandpa",
  "futures 0.3.5",
- "jsonrpc-core",
+ "jsonrpc-core 15.0.0",
  "jsonrpc-core-client",
  "jsonrpc-derive",
  "jsonrpc-pubsub",
@@ -7259,7 +7273,7 @@ dependencies = [
  "futures 0.1.29",
  "futures 0.3.5",
  "hash-db",
- "jsonrpc-core",
+ "jsonrpc-core 15.0.0",
  "jsonrpc-pubsub",
  "lazy_static",
  "log",
@@ -7296,7 +7310,7 @@ version = "0.8.0"
 dependencies = [
  "derive_more",
  "futures 0.3.5",
- "jsonrpc-core",
+ "jsonrpc-core 15.0.0",
  "jsonrpc-core-client",
  "jsonrpc-derive",
  "jsonrpc-pubsub",
@@ -7318,7 +7332,7 @@ name = "sc-rpc-server"
 version = "2.0.0"
 dependencies = [
  "futures 0.1.29",
- "jsonrpc-core",
+ "jsonrpc-core 15.0.0",
  "jsonrpc-http-server",
  "jsonrpc-ipc-server",
  "jsonrpc-pubsub",
@@ -7355,7 +7369,7 @@ dependencies = [
  "futures 0.3.5",
  "futures-timer 3.0.2",
  "hash-db",
- "jsonrpc-core",
+ "jsonrpc-core 15.0.0",
  "jsonrpc-pubsub",
  "lazy_static",
  "log",
@@ -8870,7 +8884,7 @@ dependencies = [
  "frame-system",
  "futures 0.3.5",
  "jsonrpc-client-transports",
- "jsonrpc-core",
+ "jsonrpc-core 15.0.0",
  "parity-scale-codec",
  "sc-rpc-api",
  "serde",
@@ -8884,7 +8898,7 @@ version = "2.0.0"
 dependencies = [
  "frame-system-rpc-runtime-api",
  "futures 0.3.5",
- "jsonrpc-core",
+ "jsonrpc-core 15.0.0",
  "jsonrpc-core-client",
  "jsonrpc-derive",
  "log",

@@ -39,7 +39,7 @@ pub use frame_support::{
 };
 
 /// An index to a block.
-pub type BlockNumber = u32;
+pub type BlockNumber = u64;
 
 /// Alias to 512-bit hash when used in the context of a transaction signature on the chain.
 pub type Signature = MultiSignature;
@@ -254,6 +254,9 @@ impl pallet_sudo::Trait for Runtime {
 	type Call = Call;
 }
 
+impl pallet_randomness_beacon::Trait for Runtime {
+}
+
 // Create the runtime by composing the FRAME pallets that were previously configured.
 construct_runtime!(
 	pub enum Runtime where
@@ -269,6 +272,7 @@ construct_runtime!(
 		Balances: pallet_balances::{Module, Call, Storage, Config<T>, Event<T>},
 		TransactionPayment: pallet_transaction_payment::{Module, Storage},
 		Sudo: pallet_sudo::{Module, Call, Config<T>, Storage, Event<T>},
+                RandomnessBeacon: pallet_randomness_beacon::{Module, Call, Storege},
 	}
 );
 

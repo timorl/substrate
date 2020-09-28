@@ -13,8 +13,8 @@ use parking_lot::Mutex;
 #[cfg(feature = "std")]
 use codec::Decode;
 #[cfg(feature = "std")]
-use sp_inherents::{InherentData, InherentDataProviders, ProvideInherentData};
-use sp_inherents::InherentIdentifier;
+use sp_inherents::{ProvideInherentData, InherentDataProviders, InherentData};
+use sp_inherents::{InherentIdentifier, IsFatalError};
 
 pub const INHERENT_IDENTIFIER: InherentIdentifier = *b"randbecn";
 pub type InherentType = Vec<(Vec<u8>, Vec<u8>)>;
@@ -28,10 +28,18 @@ pub struct InherentDataProvider {
 #[derive(Encode, sp_runtime::RuntimeDebug)]
 #[cfg_attr(feature = "std", derive(Decode))]
 pub enum InherentError {
-	WrongHeight((u64,u64)),
+	WrongHeight,
         InvalidRandomBytes,
 }
 
+impl IsFatalError for InherentError {
+	fn is_fatal_error(&self) -> bool {
+		match self {
+			InherentError::WrongHeight => true,
+			InherentError::InvalidRandomBytes => true,
+		}
+	}
+}
 
 #[cfg(feature = "std")]
 impl ProvideInherentData for InherentDataProvider {
