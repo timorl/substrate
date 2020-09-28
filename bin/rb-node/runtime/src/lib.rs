@@ -27,6 +27,7 @@ use sp_version::NativeVersion;
 #[cfg(any(feature = "std", test))]
 pub use sp_runtime::BuildStorage;
 pub use pallet_timestamp::Call as TimestampCall;
+pub use pallet_randomness_beacon::Call as RandomnessBeaconCall;
 pub use pallet_balances::Call as BalancesCall;
 pub use sp_runtime::{Permill, Perbill};
 pub use frame_support::{
@@ -276,7 +277,7 @@ construct_runtime!(
 		Balances: pallet_balances::{Module, Call, Storage, Config<T>, Event<T>},
 		TransactionPayment: pallet_transaction_payment::{Module, Storage},
 		Sudo: pallet_sudo::{Module, Call, Config<T>, Storage, Event<T>},
-                RandomnessBeacon: pallet_randomness_beacon::{Module, Call, Storage},
+                RandomnessBeacon: pallet_randomness_beacon::{Module, Call, Storage, Inherent},
 	}
 );
 

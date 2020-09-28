@@ -16,7 +16,7 @@ use sp_runtime::{
     generic::BlockId,
     traits::{Block as BlockT, Header as HeaderT},
 };
-use std::{collections::HashMap, sync::Arc, thread, time::Duration};
+use std::{collections::HashMap, sync::Arc};
 
 #[derive(derive_more::Display, Debug)]
 pub enum Error {
@@ -24,6 +24,7 @@ pub enum Error {
     Client(sp_blockchain::Error),
     #[display(fmt = "Checking inherents failed: {}", _0)]
     CheckInherents(String),
+    DataProvider(String),
 }
 
 impl std::convert::From<Error> for ConsensusError {
@@ -105,57 +106,32 @@ where
         }
         */
 
-        // The following method for checking if inherent data is correct is from timestamp pallet
         /*
         let block_id = BlockId::Hash(block.header().hash());
 
-        let inherent_res = self
+        let _inherent_res = self
             .client
             .runtime_api()
             .check_inherents(&block_id, block, inherent_data)
             .map_err(Error::Client)?;
 
 
-
-
         if !inherent_res.ok() {
             inherent_res
                 .into_errors()
-                .try_for_each(|(i, e)| match TIError::try_from(&i, &e) {
-                    Some(TIError::ValidAtTimestamp(timestamp)) => {
-                        // halt import until timestamp is valid.
-                        // reject when too far ahead.
-                        if timestamp > timestamp_now + MAX_TIMESTAMP_DRIFT_SECS {
-                            return Err(Error::TooFarInFuture);
-                        }
-
-                        let diff = timestamp.saturating_sub(timestamp_now);
-                        thread::sleep(Duration::from_secs(diff));
+                .try_for_each(|(i, e)| match sp_randomness_beacon::InherentError::try_from(&i, &e) {
+                    Some(sp_randomness_beacon::InherentError::WrongHeight) => {
+                        info!(target: "import", "wrong height");
                         Ok(())
                     }
-                    Some(TIError::Other(e)) => Err(Error::Runtime(e.into())),
-                    None => Err(Error::DataProvider(
-                        self.inherent_data_providers.error_to_string(&i, &e),
-                    )),
-                })
+                    Some(sp_randomness_beacon::InherentError::InvalidRandomBytes) => {
+                        info!(target: "import", "invalid rb");
+                        Ok(())
+                    }
+                    None => Err(Error::DataProvider( self.inherent_data_providers.error_to_string(&i, &e),)),
+                })?;
         }
         */
-
-        let parent_hash = block.header().parent_hash();
-        let parent_nonce = <B as BlockT>::Hash::encode(&parent_hash);
-        while self
-            .random_bytes
-            .lock()
-            .iter()
-            .find(|(nonce, _)| nonce[..] == parent_nonce[..])
-            .is_none()
-        {
-            // the appropriate random bytes are not ready, let's wait
-            // TODO: add some deadline
-            // TODO: add some notification instead of dummy sleep
-            info!(target: "import", "random bytes are not ready, waiting");
-            thread::sleep(Duration::from_millis(100));
-        }
 
         Ok(())
     }
@@ -233,6 +209,9 @@ where
             }
             self.random_bytes_buf.insert(nonce, None);
         }
+
+        info!("rbbi");
+
 
         self.inner
             .import_block(block, new_cache)
