@@ -1,15 +1,20 @@
 #![cfg_attr(not(feature = "std"), no_std)]
 
 use codec::Encode;
-use log::info;
+use sp_std::vec::Vec;
 
 #[cfg(feature = "std")]
+use log::info;
+#[cfg(feature = "std")]
+use sp_std::sync::Arc;
+#[cfg(feature = "std")]
 use parking_lot::Mutex;
-use std::sync::Arc;
 
 #[cfg(feature = "std")]
 use codec::Decode;
-use sp_inherents::{InherentData, InherentDataProviders, InherentIdentifier, ProvideInherentData};
+#[cfg(feature = "std")]
+use sp_inherents::{InherentData, InherentDataProviders, ProvideInherentData};
+use sp_inherents::InherentIdentifier;
 
 pub const INHERENT_IDENTIFIER: InherentIdentifier = *b"randbecn";
 pub type InherentType = Vec<(Vec<u8>, Vec<u8>)>;
@@ -51,6 +56,7 @@ impl ProvideInherentData for InherentDataProvider {
 }
 
 /// Register the RndB inherent data provider, if not registered already.
+#[cfg(feature = "std")]
 pub fn register_rb_inherent_data_provider(
     inherent_data_providers: &InherentDataProviders,
     random_bytes: Arc<Mutex<InherentType>>,

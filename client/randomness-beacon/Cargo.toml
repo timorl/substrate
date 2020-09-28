@@ -33,6 +33,7 @@ serde_json = "1.0.41"
 sc-client-api = { version = "2.0.0-rc6", path = "../api" }
 sp-inherents = { version = "2.0.0-rc6", path = "../../primitives/inherents" }
 sp-blockchain = { version = "2.0.0-rc6", path = "../../primitives/blockchain" }
+sp-randomness-beacon= { version = "2.0.0-rc6", path = "../../primitives/randomness-beacon" }
 sc-network = { version = "0.8.0-rc6", path = "../network" }
 sc-network-gossip = { version = "0.8.0-rc6", path = "../network-gossip" }
 sp-finality-tracker = { version = "2.0.0-rc6", path = "../../primitives/finality-tracker" }

@@ -4785,6 +4785,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "pallet-randomness-beacon"
+version = "2.0.0-rc6"
+dependencies = [
+ "frame-support",
+ "frame-system",
+ "impl-trait-for-tuples",
+ "parity-scale-codec",
+ "sp-authorship",
+ "sp-core",
+ "sp-inherents",
+ "sp-io",
+ "sp-randomness-beacon",
+ "sp-runtime",
+ "sp-std",
+]
+
+[[package]]
 name = "pallet-randomness-collective-flip"
 version = "2.0.0"
 dependencies = [
@@ -5981,6 +5998,7 @@ dependencies = [
  "sp-finality-tracker",
  "sp-inherents",
  "sp-keyring",
+ "sp-randomness-beacon",
  "sp-runtime",
  "sp-state-machine",
  "sp-std",
@@ -6065,6 +6083,7 @@ dependencies = [
  "sp-core",
  "sp-finality-grandpa",
  "sp-inherents",
+ "sp-randomness-beacon",
  "sp-runtime",
  "sp-transaction-pool",
  "structopt",
@@ -8370,6 +8389,18 @@ version = "2.0.0"
 dependencies = [
  "backtrace",
  "log",
+]
+
+[[package]]
+name = "sp-randomness-beacon"
+version = "2.0.0-rc6"
+dependencies = [
+ "log",
+ "parity-scale-codec",
+ "parking_lot 0.10.2",
+ "sp-inherents",
+ "sp-runtime",
+ "sp-std",
 ]
 
 [[package]]

@@ -9,6 +9,8 @@ use sc_network_gossip::{
 use sp_core::traits::BareCryptoStorePtr;
 use sp_runtime::traits::Block as BlockT;
 
+use sp_randomness_beacon::InherentType;
+
 use futures::{channel::mpsc::Receiver, prelude::*};
 use parking_lot::{Mutex, RwLock};
 use std::{
@@ -62,7 +64,6 @@ impl From<(AuthorityId, BareCryptoStorePtr)> for LocalIdKeystore {
 }
 
 pub mod import;
-pub mod inherents;
 pub mod keybox;
 
 #[derive(Debug, Clone, Encode, Decode)]
@@ -153,13 +154,16 @@ impl<B: BlockT> Validator<B> for GossipValidator {
                 ValidationResult::ProcessAndKeep(topic)
             }
             Err(e) => {
-                info!(target: RB_PROTOCOL_NAME, "Error decoding message: {}", e.what());
+                info!(
+                    target: RB_PROTOCOL_NAME,
+                    "Error decoding message: {}",
+                    e.what()
+                );
                 ValidationResult::Discard
             }
         }
     }
 }
-
 
 #[derive(Clone)]
 pub struct OutgoingMessage<B: BlockT> {
@@ -178,17 +182,25 @@ impl<B: BlockT> OutgoingMessage<B> {
         self.gossip_engine
             .lock()
             .gossip_message(topic, message.encode(), true);
+        info!(target: RB_PROTOCOL_NAME, "sent message");
     }
 }
 
 pub struct NetworkBridge<B: BlockT> {
     id: i64,
-    topics: HashMap<B::Hash, (Receiver<TopicNotification>, OutgoingMessage<B>, futures_timer::Delay)>,
+    topics: HashMap<
+        B::Hash,
+        (
+            Receiver<TopicNotification>,
+            OutgoingMessage<B>,
+            futures_timer::Delay,
+        ),
+    >,
     keystore: LocalIdKeystore,
     gossip_engine: Arc<Mutex<GossipEngine<B>>>,
     validator: Arc<GossipValidator>,
     randomness_nonce_rx: Receiver<Nonce>,
-    random_bytes: Arc<Mutex<inherents::InherentType>>,
+    random_bytes: Arc<Mutex<InherentType>>,
 }
 
 impl<B: BlockT> Unpin for NetworkBridge<B> {}
@@ -199,7 +211,7 @@ impl<B: BlockT> NetworkBridge<B> {
         randomness_nonce_rx: Receiver<Nonce>,
         network: Arc<NetworkService<B, <B as BlockT>::Hash>>,
         keystore: LocalIdKeystore,
-        random_bytes: Arc<Mutex<inherents::InherentType>>,
+        random_bytes: Arc<Mutex<InherentType>>,
     ) -> Self {
         let validator = Arc::new(GossipValidator::new());
         let gossip_engine = Arc::new(Mutex::new(GossipEngine::new(
@@ -210,7 +222,7 @@ impl<B: BlockT> NetworkBridge<B> {
         )));
 
         NetworkBridge {
-            id: if id == "Alice" {0} else {1},
+            id: if id == "Alice" { 0 } else { 1 },
             topics: HashMap::new(),
             keystore,
             gossip_engine,
@@ -233,8 +245,11 @@ impl<B: BlockT> NetworkBridge<B> {
         self.note_round(round);
         let topic = round_topic::<B>(nonce.clone());
 
-        let incoming = self.gossip_engine.lock().messages_for(topic).
-            filter_map(move |notification| {
+        let incoming = self
+            .gossip_engine
+            .lock()
+            .messages_for(topic)
+            .filter_map(move |notification| {
                 let decoded = GossipMessage::decode(&mut &notification.message[..]);
                 match decoded {
                     Ok(gm) => {
@@ -242,15 +257,17 @@ impl<B: BlockT> NetworkBridge<B> {
                         future::ready(Some(gm))
                     }
                     Err(ref e) => {
-                        info!(target: RB_PROTOCOL_NAME, "Skipping malformed message {:?}: {}", notification, e);
+                        info!(
+                            target: RB_PROTOCOL_NAME,
+                            "Skipping malformed message {:?}: {}", notification, e
+                        );
                         future::ready(None)
                     }
                 }
-            }).into_inner();
+            })
+            .into_inner();
 
-        let msg = Message {
-            data: self.id,
-        };
+        let msg = Message { data: self.id };
         let msg = msg
             .sign(self.keystore.local_id().clone(), self.keystore.as_ref())
             .unwrap();
@@ -270,7 +287,12 @@ impl<B: BlockT> Future for NetworkBridge<B> {
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
         match self.gossip_engine.lock().poll_unpin(cx) {
-            Poll::Ready(()) => return Poll::Ready(info!(target: RB_PROTOCOL_NAME, "Gossip engine future finished.")),
+            Poll::Ready(()) => {
+                return Poll::Ready(info!(
+                    target: RB_PROTOCOL_NAME,
+                    "Gossip engine future finished."
+                ))
+            }
             Poll::Pending => {}
         };
 
@@ -286,25 +308,31 @@ impl<B: BlockT> Future for NetworkBridge<B> {
             // received new nonce, start collecting signatures for it
             // TODO: some throttling
             if !self.topics.contains_key(&topic) {
-                info!(target: RB_PROTOCOL_NAME, "received new nonce {:?}", new_nonce);
+                info!(
+                    target: RB_PROTOCOL_NAME,
+                    "received new nonce {:?}", new_nonce
+                );
                 let (incoming, outgoing) = self.round_communication(new_nonce);
                 let periodic_sender = futures_timer::Delay::new(SEND_INTERVAL);
-                self.topics.insert(topic, (incoming, outgoing, periodic_sender));
+                self.topics
+                    .insert(topic, (incoming, outgoing, periodic_sender));
             }
         }
 
         // TODO: add a mechanism for clearing old topics
         if self.topics.is_empty() {
-            info!(target: RB_PROTOCOL_NAME, "network bridge didn't receive a first topic");
+            info!(
+                target: RB_PROTOCOL_NAME,
+                "network bridge didn't receive a first topic"
+            );
             return Poll::Pending;
         }
 
         // TODO: refactor this awful borrow checker hack
-        let id = self.id;
         let random_bytes = self.random_bytes.clone();
 
         // TODO: maybe parallelize
-        for (_, (incoming, outgoing, periodic_sender)) in self.topics.iter_mut(){
+        for (_, (incoming, outgoing, periodic_sender)) in self.topics.iter_mut() {
             while let Poll::Ready(()) = periodic_sender.poll_unpin(cx) {
                 periodic_sender.reset(SEND_INTERVAL);
                 outgoing.send();
@@ -313,13 +341,18 @@ impl<B: BlockT> Future for NetworkBridge<B> {
             let poll = incoming.poll_next_unpin(cx);
             match poll {
                 Poll::Ready(Some(notification)) => {
-                    let GossipMessage{nonce, message} = GossipMessage::decode(&mut &notification.message[..]).unwrap();
-                    info!(target: RB_PROTOCOL_NAME, "{} received message {:?}", id, message.message);
+                    let GossipMessage { nonce, message } =
+                        GossipMessage::decode(&mut &notification.message[..]).unwrap();
                     // combine shares and on succes put new random_bytes for InherentDataProvider
-                    random_bytes.lock().push((nonce, message.message.data));
+                    random_bytes
+                        .lock()
+                        .push((nonce, message.message.data.to_be_bytes().to_vec()));
                 }
-                Poll::Ready(None) => info!(target: RB_PROTOCOL_NAME, "poll_next_unpin returned Ready(None) ==> investigate!"),
-                Poll::Pending => {},
+                Poll::Ready(None) => info!(
+                    target: RB_PROTOCOL_NAME,
+                    "poll_next_unpin returned Ready(None) ==> investigate!"
+                ),
+                Poll::Pending => {}
             }
         }
 
