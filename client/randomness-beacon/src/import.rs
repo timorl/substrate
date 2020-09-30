@@ -9,7 +9,7 @@ use sp_blockchain::{well_known_cache_keys::Id as CacheKeyId, HeaderBackend, Prov
 use sp_consensus::{
     BlockCheckParams, BlockImport, BlockImportParams, Error as ConsensusError, ImportResult,
 };
-use sp_inherents::{InherentData, InherentDataProviders};
+use sp_inherents::InherentDataProviders;
 use sp_randomness_beacon::{register_rb_inherent_data_provider, InherentType};
 
 use sp_runtime::{
@@ -88,65 +88,19 @@ where
         }
     }
 
-    fn check_inherents(&self, block: B, _inherent_data: InherentData) -> Result<(), Error> {
-        if *block.header().number() < self.check_inherents_after {
-            return Ok(());
-        }
-
-        // skip check if the node is not an authority
-        /*
-        if let Err(e) = self.can_author_with.can_author_with(&block_id) {
-            debug!(
-                target: "aura",
-                "Skipping `check_inherents` as authoring version is not compatible: {}",
-                e,
-            );
-
-            return Ok(());
-        }
-        */
-
-        /*
-        let block_id = BlockId::Hash(block.header().hash());
-
-        let _inherent_res = self
-            .client
-            .runtime_api()
-            .check_inherents(&block_id, block, inherent_data)
-            .map_err(Error::Client)?;
-
-
-        if !inherent_res.ok() {
-            inherent_res
-                .into_errors()
-                .try_for_each(|(i, e)| match sp_randomness_beacon::InherentError::try_from(&i, &e) {
-                    Some(sp_randomness_beacon::InherentError::WrongHeight) => {
-                        info!(target: "import", "wrong height");
-                        Ok(())
-                    }
-                    Some(sp_randomness_beacon::InherentError::InvalidRandomBytes) => {
-                        info!(target: "import", "invalid rb");
-                        Ok(())
-                    }
-                    None => Err(Error::DataProvider( self.inherent_data_providers.error_to_string(&i, &e),)),
-                })?;
-        }
-        */
-
-        Ok(())
-    }
+    // This should simply
 
     // Note: this works under the assumption that in a block there is seed corresponding to a
     // hash of the parent of the current block. If we were to allow skipping randomness in some
     // blocks, then we would need to read parent_nonce from inherents in current block.
-    fn clear_old_random_bytes(&mut self, parent_hash: <B as BlockT>::Hash) {
-        let parent_nonce = <B as BlockT>::Hash::encode(&parent_hash);
+    // fn clear_old_random_bytes(&mut self, parent_hash: <B as BlockT>::Hash) {
+    // 	let parent_nonce = <B as BlockT>::Hash::encode(&parent_hash);
 
-        self.random_bytes_buf.remove(&parent_nonce);
-        self.random_bytes
-            .lock()
-            .retain(|(nonce, _)| nonce[..] != parent_nonce[..]);
-    }
+    // 	self.random_bytes_buf.remove(&parent_nonce);
+    // 	self.random_bytes
+    // 		.lock()
+    // 		.retain(|(nonce, _)| nonce[..] != parent_nonce[..]);
+    // }
 
     // TODO: Nonce should be a hash so that Randomness-Beacon Pallet may choose the right one, but we
     // cannot make InherentType generic over BlockT. Figureout how to do it optimally. Current
@@ -184,23 +138,10 @@ where
 
     fn import_block(
         &mut self,
-        mut block: BlockImportParams<B, Self::Transaction>,
+        block: BlockImportParams<B, Self::Transaction>,
         new_cache: HashMap<CacheKeyId, Vec<u8>>,
     ) -> Result<ImportResult, Self::Error> {
-        let parent_hash = *block.header.parent_hash();
-        self.clear_old_random_bytes(parent_hash);
-
-        if let Some(inner_body) = block.body.take() {
-            let check_block = B::new(block.header.clone(), inner_body);
-
-            let inherent_data = self
-                .inherent_data_providers
-                .create_inherent_data()
-                .map_err(|e| e.into_string())?;
-            self.check_inherents(check_block.clone(), inherent_data)?;
-
-            block.body = Some(check_block.deconstruct().1);
-        }
+        //let parent_hash = *block.header.parent_hash();
 
         if let Some(nonce) = self.hash_to_nonce(block.post_hash()) {
             if let Err(err) = self.randomness_nonce_tx.try_send(nonce.clone()) {
@@ -211,7 +152,6 @@ where
         }
 
         info!("rbbi");
-
 
         self.inner
             .import_block(block, new_cache)

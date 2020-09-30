@@ -22,7 +22,7 @@
 use frame_support::weights::{Weight};
 
 use sp_std::{result, vec::Vec};
-use sp_runtime::print;
+use sp_runtime;
 use frame_support::{decl_module, decl_storage, decl_error};
 use frame_system::ensure_none;
 use codec::{Encode, Decode};
@@ -37,9 +37,11 @@ pub trait Trait: frame_system::Trait {
 
 decl_storage! {
     trait Store for Module<T: Trait> as RandomnessBeacon {
+    	// It seems that having this map is not necessary as we only need
+    	// to store random_bytes for the most recent block
+    	// will change it once everything else works properly
         SeedByHeight: map hasher(blake2_128_concat) T::BlockNumber => Vec<u8>;
-
-		/// Did the random_bytes was set in this block?
+		/// Was random_bytes was set in this block?
 		DidUpdate: bool;
     }
 }
@@ -55,30 +57,26 @@ decl_module! {
 		type Error = Error<T>;
 
 		fn on_initialize(now: T::BlockNumber) -> Weight {
-                    print("on init");
+			sp_runtime::print("on init");
 			0
 		}
 
 		#[weight = 0]
 		fn set_random_bytes(origin, height: T::BlockNumber, random_bytes: Vec<u8>)  {
-                    print("on set");
+			sp_runtime::print("on set");
 			ensure_none(origin)?;
 
 			assert!(!<Self as Store>::DidUpdate::exists(), "Randomness must be set only once in the block");
 
 			<Self as Store>::SeedByHeight::insert(height, random_bytes);
 			<Self as Store>::DidUpdate::put(true);
-                        
-                        // a possiblity to clear used random_bytes, from pallet_timestamp:
-			// <T::OnTimestampSet as OnTimestampSet<_>>::on_timestamp_set(now);
 		}
 
 		fn on_finalize(bn: T::BlockNumber) {
-                    print("on fin");
-
-                        if bn >= START_BEACON_HEIGHT.into() {
-			    assert!(<Self as Store>::DidUpdate::take(), "Randomness must be put into the block");
-                        }
+			sp_runtime::print("on fin");
+			if bn >= START_BEACON_HEIGHT.into() {
+				assert!(<Self as Store>::DidUpdate::take(), "Randomness must be put into the block");
+			}
 		}
 	}
 }
@@ -86,15 +84,17 @@ decl_module! {
 
 pub trait RandomSeedInherentData<H: Decode + Eq> {
 	/// Get random random_bytes for hash or None
-	fn random_random_bytes(&self, block_hash: H) -> Option<Vec<u8>>;
+	fn get_random_bytes(&self, block_hash: H) -> Option<Vec<u8>>;
 }
 
 impl<H: Decode + Eq> RandomSeedInherentData<H> for InherentData {
-	fn random_random_bytes(&self, block_hash: H) -> Option<Vec<u8>> {
+	fn get_random_bytes(&self, block_hash: H) -> Option<Vec<u8>> {
+		sp_runtime::print("in get_random_bytes");
 		let list_hash_random_bytes: Option<Vec<(H, Vec<u8>)>> = self.get_data(&INHERENT_IDENTIFIER).unwrap_or_default();
-                if list_hash_random_bytes.is_none() {
-                    return None;
-                }
+		if list_hash_random_bytes.is_none() {
+			sp_runtime::print("get_data output none, it means random_bytes not available yet");
+		    return None;
+		}
 		for (hash, random_bytes) in list_hash_random_bytes.unwrap() {
 			if hash == block_hash {
 				return Some(random_bytes);
@@ -109,17 +109,19 @@ fn check_random_bytes(_nonce: Vec<u8>, _random_bytes: Vec<u8>) -> bool {
     true
 }
 
+use sp_std::convert::TryInto;
+
 impl<T: Trait> ProvideInherent for Module<T> {
 	type Call = Call<T>;
 	type Error = InherentError;
         const INHERENT_IDENTIFIER: InherentIdentifier = INHERENT_IDENTIFIER;
 
 	fn create_inherent(data: &InherentData) -> Option<Self::Call> {
-                print("create_inherent");
 		let now = <frame_system::Module<T>>::block_number();
+		sp_runtime::print(("create_inherent block height: ", now.try_into().unwrap_or_default()));
 		if now >= T::BlockNumber::from(START_BEACON_HEIGHT) {
 			let parent_hash = <frame_system::Module<T>>::parent_hash();
-			return match data.random_random_bytes(parent_hash) {
+			return match data.get_random_bytes(parent_hash.encode()) {
 				Some(random_bytes) => Some(Self::Call::set_random_bytes(now, random_bytes)),
 				None => None,
 			};
@@ -128,22 +130,23 @@ impl<T: Trait> ProvideInherent for Module<T> {
 	}
 
 	fn check_inherent(call: &Self::Call, _: &InherentData) -> result::Result<(), Self::Error> {
+		let now = <frame_system::Module<T>>::block_number();
+		sp_runtime::print(("check_inherent block height: ", now.try_into().unwrap_or_default()));
 		let (height, random_bytes) = match call {
 			Call::set_random_bytes(ref height, ref random_bytes) => (height.clone(), random_bytes.clone()),
 			_ => return Ok(()),
 		};
 
-                let now = <frame_system::Module<T>>::block_number();
-                if height != now - 1.into() {
-                    return Err(sp_randomness_beacon::InherentError::WrongHeight);
-                }
+		if height != now {
+			return Err(sp_randomness_beacon::InherentError::WrongHeight);
+		}
+
 		let parent_hash = <frame_system::Module<T>>::parent_hash();
-                let parent_nonce = Encode::encode(&parent_hash);
+		let parent_nonce = Encode::encode(&parent_hash);
 
-                if !check_random_bytes(parent_nonce, random_bytes) {
-                    return Err(sp_randomness_beacon::InherentError::InvalidRandomBytes);
-                }
-
-                Ok(())
+		if !check_random_bytes(parent_nonce, random_bytes) {
+			return Err(sp_randomness_beacon::InherentError::InvalidRandomBytes);
+		}
+		Ok(())
 	}
 }

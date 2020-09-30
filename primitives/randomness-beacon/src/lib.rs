@@ -2,17 +2,19 @@
 
 use codec::Encode;
 use sp_std::vec::Vec;
+//use sp_runtime::print;
 
 #[cfg(feature = "std")]
-#[cfg(feature = "std")]
-use sp_std::sync::Arc;
+use log::info;
 #[cfg(feature = "std")]
 use parking_lot::Mutex;
+#[cfg(feature = "std")]
+use sp_std::sync::Arc;
 
 #[cfg(feature = "std")]
 use codec::Decode;
 #[cfg(feature = "std")]
-use sp_inherents::{ProvideInherentData, InherentDataProviders, InherentData};
+use sp_inherents::{InherentData, InherentDataProviders, ProvideInherentData};
 use sp_inherents::{InherentIdentifier, IsFatalError};
 
 pub const INHERENT_IDENTIFIER: InherentIdentifier = *b"randbecn";
@@ -27,28 +29,28 @@ pub struct InherentDataProvider {
 #[derive(Encode, sp_runtime::RuntimeDebug)]
 #[cfg_attr(feature = "std", derive(Decode))]
 pub enum InherentError {
-	WrongHeight,
-        InvalidRandomBytes,
+    WrongHeight,
+    InvalidRandomBytes,
 }
 
 impl InherentError {
-	/// Try to create an instance ouf of the given identifier and data.
-	#[cfg(feature = "std")]
-	pub fn try_from(id: &InherentIdentifier, data: &[u8]) -> Option<Self> {
-		if id == &INHERENT_IDENTIFIER {
-			<InherentError as codec::Decode>::decode(&mut &data[..]).ok()
-		} else {
-			None
-		}
-	}
+    /// Try to create an instance ouf of the given identifier and data.
+    #[cfg(feature = "std")]
+    pub fn try_from(id: &InherentIdentifier, data: &[u8]) -> Option<Self> {
+        if id == &INHERENT_IDENTIFIER {
+            <InherentError as codec::Decode>::decode(&mut &data[..]).ok()
+        } else {
+            None
+        }
+    }
 }
 impl IsFatalError for InherentError {
-	fn is_fatal_error(&self) -> bool {
-		match self {
-			InherentError::WrongHeight => true,
-			InherentError::InvalidRandomBytes => true,
-		}
-	}
+    fn is_fatal_error(&self) -> bool {
+        match self {
+            InherentError::WrongHeight => true,
+            InherentError::InvalidRandomBytes => true,
+        }
+    }
 }
 
 #[cfg(feature = "std")]
@@ -61,8 +63,17 @@ impl ProvideInherentData for InherentDataProvider {
         &self,
         inherent_data: &mut InherentData,
     ) -> Result<(), sp_inherents::Error> {
+        info!(
+            "Providing Inherent data of len {:?}",
+            self.random_bytes.lock().len()
+        );
         let id = (*self.random_bytes.lock()).clone();
-        inherent_data.put_data(INHERENT_IDENTIFIER, &id)
+        info!("Putting {:?}", id);
+        let result = inherent_data.put_data(INHERENT_IDENTIFIER, &id);
+        if result.is_err() {
+            info!("put data Error");
+        };
+        result
     }
 
     fn error_to_string(&self, error: &[u8]) -> Option<String> {
