@@ -64,7 +64,6 @@ impl From<(AuthorityId, BareCryptoStorePtr)> for LocalIdKeystore {
 }
 
 pub mod import;
-pub mod keybox;
 
 #[derive(Debug, Clone, Encode, Decode)]
 pub struct Message {
