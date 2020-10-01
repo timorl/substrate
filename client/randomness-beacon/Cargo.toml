@@ -51,6 +51,7 @@ sp-api = { version = "2.0.0", default-features = false, path = "../../primitives
 sp-core = { version = "2.0.0", default-features = false, path = "../../primitives/core" }
 sp-runtime = { version = "2.0.0", default-features = false, path = "../../primitives/runtime" }
 sp-std = { version = "2.0.0", default-features = false, path = "../../primitives/std" }
+tokio-executor = { version = "0.2.0-alpha.6", features = ["blocking"] }
 
 [dev-dependencies]
 assert_matches = "1.3.0"
