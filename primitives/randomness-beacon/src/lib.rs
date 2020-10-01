@@ -1,4 +1,7 @@
+#![cfg_attr(not(feature = "std"), no_std)]
+
 use sp_runtime::traits::Block as BlockT;
+use sp_std::vec::Vec;
 
 pub mod inherents;
 
@@ -7,7 +10,6 @@ pub trait Share<B: BlockT> {
 	fn nonce(&self) -> B::Hash;
 	fn member_id(&self) -> u32;
 }
-
 pub trait KeyBox<B: BlockT> {
 	type S: Share<B>;
 
@@ -55,7 +57,6 @@ mod tests {
 			self.member_id
 		}
 	}
-
 	// these mock implementations can be at some point moved elsewhere
 	struct TrivialKeyBox {
 		my_id: Option<u32>,
