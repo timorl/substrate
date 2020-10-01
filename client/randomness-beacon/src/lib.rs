@@ -16,9 +16,9 @@ use parking_lot::{Mutex, RwLock};
 use std::{
 	collections::HashMap,
 	pin::Pin,
-	sync::Arc,
+	sync::{mpsc::Sender, Arc},
 	task::{Context, Poll},
-	time,
+	thread, time,
 };
 
 const RANDOMNESS_BEACON_ID: [u8; 4] = *b"rndb";
@@ -63,6 +63,7 @@ impl From<(AuthorityId, BareCryptoStorePtr)> for LocalIdKeystore {
 	}
 }
 
+pub mod authorship;
 pub mod import;
 
 #[derive(Debug, Clone, Encode, Decode)]
@@ -199,6 +200,7 @@ pub struct NetworkBridge<B: BlockT> {
 	gossip_engine: Arc<Mutex<GossipEngine<B>>>,
 	validator: Arc<GossipValidator>,
 	randomness_nonce_rx: Receiver<Nonce>,
+	randomness_ready_tx: Option<Sender<Nonce>>,
 	random_bytes: Arc<Mutex<InherentType>>,
 }
 
@@ -211,6 +213,7 @@ impl<B: BlockT> NetworkBridge<B> {
 		network: Arc<NetworkService<B, <B as BlockT>::Hash>>,
 		keystore: LocalIdKeystore,
 		random_bytes: Arc<Mutex<InherentType>>,
+		randomness_ready_tx: Option<Sender<Nonce>>,
 	) -> Self {
 		let validator = Arc::new(GossipValidator::new());
 		let gossip_engine = Arc::new(Mutex::new(GossipEngine::new(
@@ -227,6 +230,7 @@ impl<B: BlockT> NetworkBridge<B> {
 			gossip_engine,
 			validator,
 			randomness_nonce_rx,
+			randomness_ready_tx,
 			random_bytes,
 		}
 	}
@@ -329,6 +333,7 @@ impl<B: BlockT> Future for NetworkBridge<B> {
 
 		// TODO: refactor this awful borrow checker hack
 		let random_bytes = self.random_bytes.clone();
+		let randomness_ready_tx = self.randomness_ready_tx.clone();
 
 		// TODO: maybe parallelize
 		for (_, (incoming, outgoing, periodic_sender)) in self.topics.iter_mut() {
@@ -349,7 +354,17 @@ impl<B: BlockT> Future for NetworkBridge<B> {
 					);
 					random_bytes
 						.lock()
-						.push((nonce, message.message.data.to_be_bytes().to_vec()));
+						.push((nonce.clone(), message.message.data.to_be_bytes().to_vec()));
+					if let Some(ref randomness_ready_tx) = randomness_ready_tx {
+						let secs = 30;
+						info!(
+							target: RB_PROTOCOL_NAME,
+							"SLEEPING FOR {:?} SECS BEFORE SENDING NOTIFICATION", secs
+						);
+						thread::sleep(time::Duration::from_secs(secs));
+						assert!( randomness_ready_tx.send(nonce).is_ok(), "problem with sending a notification that a new randomness is available");
+						info!(target: RB_PROTOCOL_NAME, "NOTIFICATION SENT");
+					}
 					info!(
 						target: RB_PROTOCOL_NAME,
 						"Len of random_bytes: {:?}",
