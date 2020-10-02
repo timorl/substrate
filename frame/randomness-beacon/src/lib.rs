@@ -52,13 +52,11 @@ decl_module! {
 
 
 		fn on_initialize(now: T::BlockNumber) -> Weight {
-			sp_runtime::print("on init");
 			0
 		}
 
 		#[weight = 0]
 		fn set_random_bytes(origin, height: T::BlockNumber, random_bytes: Vec<u8>)  {
-			sp_runtime::print("on set");
 			ensure_none(origin)?;
 
 			assert!(!<Self as Store>::DidUpdate::exists(), "Randomness must be set only once in the block");
@@ -68,7 +66,6 @@ decl_module! {
 		}
 
 		fn on_finalize(bn: T::BlockNumber) {
-			sp_runtime::print("on fin");
 			if bn >= START_BEACON_HEIGHT.into() {
 				assert!(<Self as Store>::DidUpdate::take(), "Randomness must be put into the block");
 			}

@@ -16,9 +16,7 @@ use sp_core::crypto::key_types::DUMMY;
 use sp_inherents::InherentDataProviders;
 use std::sync::Arc;
 
-use randomness_beacon::{
-	import::RandomnessBeaconBlockImport, LocalIdKeystore, NetworkBridge, Nonce,
-};
+use randomness_beacon::{import::RandomnessBeaconBlockImport, NetworkBridge, Nonce};
 use sp_randomness_beacon::inherents::InherentType;
 
 // Our native executor instance.
@@ -231,15 +229,10 @@ pub fn new_full(config: Configuration) -> Result<TaskManager, ServiceError> {
 			.spawn_blocking("aura", aura);
 	}
 
-	let keystore = LocalIdKeystore::from((
-		public.into(),
-		keystore.clone() as sp_core::traits::BareCryptoStorePtr,
-	));
 	let nb = NetworkBridge::new(
 		name,
 		randomness_nonce_rx,
 		network,
-		keystore,
 		random_bytes,
 		randomness_notifier_tx,
 	);

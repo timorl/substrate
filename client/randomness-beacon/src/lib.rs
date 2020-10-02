@@ -18,7 +18,7 @@ use std::{
 	pin::Pin,
 	sync::{mpsc::Sender, Arc},
 	task::{Context, Poll},
-	thread, time,
+	time,
 };
 
 const RANDOMNESS_BEACON_ID: [u8; 4] = *b"rndb";
@@ -42,7 +42,7 @@ pub type AuthoritySignature = app::Signature;
 pub struct LocalIdKeystore((AuthorityId, BareCryptoStorePtr));
 
 impl LocalIdKeystore {
-	fn local_id(&self) -> &AuthorityId {
+	fn _local_id(&self) -> &AuthorityId {
 		&(self.0).0
 	}
 
@@ -71,47 +71,10 @@ pub struct Message {
 	pub data: RandomBytes,
 }
 
-impl Message {
-	pub fn sign(
-		&self,
-		public: AuthorityId,
-		keystore: &BareCryptoStorePtr,
-	) -> Option<SignedMessage> {
-		use sp_application_crypto::AppKey; // ID
-		use sp_core::crypto::Public; // to_public_crypto_pair
-		use sp_std::convert::TryInto; // try_into
-
-		let encoded = self.encode();
-		let signature = keystore
-			.read()
-			.sign_with(
-				AuthorityId::ID,
-				&public.to_public_crypto_pair(),
-				&encoded[..],
-			)
-			.ok()?
-			.try_into()
-			.ok()?;
-
-		Some(SignedMessage {
-			message: self.clone(),
-			signature,
-			id: public,
-		})
-	}
-}
-
-#[derive(Debug, Clone, Encode, Decode)]
-pub struct SignedMessage {
-	pub message: Message,
-	pub signature: AuthoritySignature,
-	pub id: AuthorityId,
-}
-
 #[derive(Debug, Encode, Decode)]
 pub struct GossipMessage {
 	pub nonce: Nonce,
-	pub message: SignedMessage,
+	pub message: Message,
 }
 
 fn round_topic<B: BlockT>(nonce: Nonce) -> B::Hash {
@@ -168,7 +131,7 @@ impl<B: BlockT> Validator<B> for GossipValidator {
 #[derive(Clone)]
 pub struct OutgoingMessage<B: BlockT> {
 	nonce: Nonce,
-	msg: SignedMessage,
+	msg: Message,
 	gossip_engine: Arc<Mutex<GossipEngine<B>>>,
 }
 
@@ -182,7 +145,6 @@ impl<B: BlockT> OutgoingMessage<B> {
 		self.gossip_engine
 			.lock()
 			.gossip_message(topic, message.encode(), true);
-		info!(target: RB_PROTOCOL_NAME, "sent message");
 	}
 }
 
@@ -196,7 +158,6 @@ pub struct NetworkBridge<B: BlockT> {
 			futures_timer::Delay,
 		),
 	>,
-	keystore: LocalIdKeystore,
 	gossip_engine: Arc<Mutex<GossipEngine<B>>>,
 	validator: Arc<GossipValidator>,
 	randomness_nonce_rx: Receiver<Nonce>,
@@ -211,7 +172,6 @@ impl<B: BlockT> NetworkBridge<B> {
 		id: String,
 		randomness_nonce_rx: Receiver<Nonce>,
 		network: Arc<NetworkService<B, <B as BlockT>::Hash>>,
-		keystore: LocalIdKeystore,
 		random_bytes: Arc<Mutex<InherentType>>,
 		randomness_ready_tx: Option<Sender<Nonce>>,
 	) -> Self {
@@ -226,7 +186,6 @@ impl<B: BlockT> NetworkBridge<B> {
 		NetworkBridge {
 			id: if id == "Alice" { 0 } else { 1 },
 			topics: HashMap::new(),
-			keystore,
 			gossip_engine,
 			validator,
 			randomness_nonce_rx,
@@ -271,9 +230,6 @@ impl<B: BlockT> NetworkBridge<B> {
 			.into_inner();
 
 		let msg = Message { data: self.id };
-		let msg = msg
-			.sign(self.keystore.local_id().clone(), self.keystore.as_ref())
-			.unwrap();
 
 		let outgoing = OutgoingMessage::<B> {
 			msg,
@@ -311,10 +267,6 @@ impl<B: BlockT> Future for NetworkBridge<B> {
 			// received new nonce, start collecting signatures for it
 			// TODO: some throttling
 			if !self.topics.contains_key(&topic) {
-				info!(
-					target: RB_PROTOCOL_NAME,
-					"received new nonce {:?}", new_nonce
-				);
 				let (incoming, outgoing) = self.round_communication(new_nonce);
 				let periodic_sender = futures_timer::Delay::new(SEND_INTERVAL);
 				self.topics
@@ -324,10 +276,6 @@ impl<B: BlockT> Future for NetworkBridge<B> {
 
 		// TODO: add a mechanism for clearing old topics
 		if self.topics.is_empty() {
-			info!(
-				target: RB_PROTOCOL_NAME,
-				"network bridge didn't receive a first topic"
-			);
 			return Poll::Pending;
 		}
 
@@ -348,22 +296,11 @@ impl<B: BlockT> Future for NetworkBridge<B> {
 					let GossipMessage { nonce, message } =
 						GossipMessage::decode(&mut &notification.message[..]).unwrap();
 					// combine shares and on succes put new random_bytes for InherentDataProvider
-					info!(
-						target: RB_PROTOCOL_NAME,
-						"We received message {:?} - {:?}", nonce, message
-					);
 					random_bytes
 						.lock()
-						.push((nonce.clone(), message.message.data.to_be_bytes().to_vec()));
+						.push((nonce.clone(), message.data.to_be_bytes().to_vec()));
 					if let Some(ref randomness_ready_tx) = randomness_ready_tx {
-						let secs = 30;
-						info!(
-							target: RB_PROTOCOL_NAME,
-							"SLEEPING FOR {:?} SECS BEFORE SENDING NOTIFICATION", secs
-						);
-						thread::sleep(time::Duration::from_secs(secs));
 						assert!( randomness_ready_tx.send(nonce).is_ok(), "problem with sending a notification that a new randomness is available");
-						info!(target: RB_PROTOCOL_NAME, "NOTIFICATION SENT");
 					}
 					info!(
 						target: RB_PROTOCOL_NAME,

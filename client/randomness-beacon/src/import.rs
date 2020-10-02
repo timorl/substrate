@@ -151,8 +151,6 @@ where
 			self.random_bytes_buf.insert(nonce, None);
 		}
 
-		info!("rbbi");
-
 		self.inner
 			.import_block(block, new_cache)
 			.map_err(Into::into)
