@@ -1,138 +1,198 @@
 #![cfg_attr(not(feature = "std"), no_std)]
 
-use sp_runtime::traits::Block as BlockT;
+use codec::{Decode, Encode};
+use sp_core::crypto::Pair;
 use sp_std::vec::Vec;
 
 pub mod inherents;
 
-// not sure if this should be even a trait?
-pub trait Share<B: BlockT> {
-	fn nonce(&self) -> B::Hash;
-	fn member_id(&self) -> u32;
+pub mod app {
+	use sp_application_crypto::{app_crypto, ed25519, KeyTypeId};
+	app_crypto!(ed25519, KeyTypeId(*b"rndb"));
 }
-pub trait KeyBox<B: BlockT> {
-	type S: Share<B>;
 
-	// outputs Some(share) if we are a member of the committee and None otherwise
-	fn generate_share(&self, nonce: B::Hash) -> Option<Self::S>;
-	fn verify_share(&self, share: &Self::S) -> bool;
-	// Some(share) if succeeded and None if failed for some reason (e.g. not enough shares) -- should add error handling later
-	fn combine_shares(&self, shares: Vec<Self::S>) -> Option<Self::S>;
-	// master share is the share with id=0, i.e., the combined signature for threshold signatures
-	fn verify_master_share(&self, share: &Self::S) -> bool {
-		match share.member_id() {
-			0 => self.verify_share(share),
-			_ => false,
+sp_application_crypto::with_pair! {
+	pub type ShareProvider = app::Pair;
+}
+
+const _seed: &[u8; 32] = b"12345678901234567890123456789012";
+
+pub type VerifyKey = app::Public;
+
+pub type Nonce = Vec<u8>;
+#[derive(PartialEq)]
+pub struct Share {
+	creator: usize,
+	nonce: Nonce,
+	data: app::Signature,
+}
+
+pub struct Randomness {
+	nonce: Nonce,
+	data: app::Signature,
+}
+
+impl From<(Nonce, Vec<u8>)> for Randomness {
+	fn from((nonce, random_bytes): (Nonce, Vec<u8>)) -> Randomness {
+		let nonce = Encode::encode(&nonce);
+		let data = app::Signature::decode(&mut &random_bytes[..]).unwrap();
+		Randomness { nonce, data }
+	}
+}
+
+pub struct RandomnessVerifier {
+	master_key: ShareProvider,
+}
+
+impl RandomnessVerifier {
+	pub fn new(_master_key: VerifyKey) -> Self {
+		let master_key = ShareProvider::from_seed(_seed);
+		RandomnessVerifier { master_key }
+	}
+
+	pub fn verify(&self, randomness: Randomness) -> bool {
+		ShareProvider::verify(
+			&randomness.data,
+			randomness.nonce,
+			&self.master_key.public(),
+		)
+	}
+}
+
+pub struct KeyBox {
+	id: usize,
+	share_provider: ShareProvider,
+	verify_keys: Vec<VerifyKey>,
+	master_key: RandomnessVerifier,
+	threshold: usize,
+}
+
+impl KeyBox {
+	pub fn new(
+		id: usize,
+		share_provider: ShareProvider,
+		verify_keys: Vec<VerifyKey>,
+		master_key: RandomnessVerifier,
+		threshold: usize,
+	) -> Self {
+		KeyBox {
+			id,
+			share_provider,
+			verify_keys,
+			master_key,
+			threshold,
 		}
 	}
-	// Some(id) if a member of the committee and None otherwise
-	fn my_id(&self) -> Option<u32>;
-	// n_members and threshold should probably not be in this trait -- will see later
-	fn n_members(&self) -> u32;
-	fn threshold(&self) -> u32;
-}
 
-pub fn verify_randomness(_nonce: Vec<u8>, _random_bytes: Vec<u8>) -> bool {
-	return true;
+	pub fn generate_share(&self, nonce: Nonce) -> Share {
+		Share {
+			creator: self.id,
+			nonce: nonce.clone(),
+			data: self.share_provider.sign(&nonce),
+		}
+	}
+
+	fn verify_share(&self, share: &Share) -> bool {
+		ShareProvider::verify(
+			&share.data,
+			share.nonce.clone(),
+			&self.verify_keys[share.creator],
+		)
+	}
+
+	// Some(share) if succeeded and None if failed for some reason (e.g. not enough shares) -- should add error handling later
+	fn combine_shares(&self, shares: Vec<Share>) -> Option<Randomness> {
+		if shares.len() == 0 {
+			return None;
+		}
+
+		if shares.iter().any(|s| !self.verify_share(s)) {
+			return None;
+		}
+
+		if shares
+			.iter()
+			.filter(|share| shares.iter().filter(|s| s == share).count() == 1)
+			.count() < self.threshold
+		{
+			return None;
+		}
+
+		let nonce = shares[0].nonce.clone();
+		if shares.iter().any(|s| s.nonce != nonce) {
+			return None;
+		}
+
+		// TODO: replace the following mock
+		Some(Randomness {
+			nonce: nonce.clone(),
+			data: ShareProvider::from_seed(_seed).sign(&nonce),
+		})
+	}
+
+	fn verify_randomness(&self, randomness: Randomness) -> bool {
+		self.master_key.verify(randomness)
+	}
+
+	fn n_members(&self) -> usize {
+		self.verify_keys.len()
+	}
+
+	fn threshold(&self) -> usize {
+		self.threshold
+	}
 }
 
 #[cfg(test)]
 mod tests {
 	use super::*;
+	use sp_core::crypto::Public;
 	use sp_runtime::testing::H256;
-	use std::collections::HashSet;
 	use substrate_test_runtime_client::runtime::Block;
-	struct TrivialShare {
-		member_id: u32,
-		nonce: H256,
-		actual_share: u32,
-	}
 
-	impl Share<Block> for TrivialShare {
-		fn nonce(&self) -> H256 {
-			self.nonce.clone()
-		}
+	#[test]
+	fn reject_wrong_randomness() {
+		let data = b"00000000000000000000000000000000";
+		let _master_key = VerifyKey::from_slice(data);
+		let verifier = RandomnessVerifier::new(_master_key);
 
-		fn member_id(&self) -> u32 {
-			self.member_id
-		}
-	}
-	// these mock implementations can be at some point moved elsewhere
-	struct TrivialKeyBox {
-		my_id: Option<u32>,
-		n_members: u32,
-		threshold: u32,
-	}
+		let master_key = ShareProvider::from_seed(_seed);
 
-	impl KeyBox<Block> for TrivialKeyBox {
-		type S = TrivialShare;
-		fn generate_share(&self, nonce: H256) -> Option<TrivialShare> {
-			match self.my_id {
-				None => None,
-				Some(id) => Some(TrivialShare {
-					member_id: id,
-					nonce: nonce,
-					actual_share: id,
-				}),
-			}
-		}
+		let nonce = b"1729".to_vec();
+		let data = master_key.sign(&nonce);
+		let randomness = Randomness {
+			nonce,
+			data: data.clone(),
+		};
+		assert!(verifier.verify(randomness));
 
-		fn verify_share(&self, share: &TrivialShare) -> bool {
-			if share.member_id > self.n_members {
-				return false;
-			}
-			return share.member_id == share.actual_share;
-		}
-
-		// if there are at least self.threshold correct, pairwise different share, then Some(master_share), else None
-		fn combine_shares(&self, shares: Vec<TrivialShare>) -> Option<TrivialShare> {
-			let mut unique_ids = HashSet::new();
-			for share in shares.iter() {
-				if self.verify_share(share) {
-					unique_ids.insert(share.member_id);
-				}
-			}
-			if (unique_ids.len() as u32) < self.threshold {
-				return None;
-			}
-			let master_share = TrivialShare {
-				member_id: 0,
-				nonce: H256::default(),
-				actual_share: 0,
-			};
-			Some(master_share)
-		}
-
-		fn my_id(&self) -> Option<u32> {
-			self.my_id
-		}
-		fn n_members(&self) -> u32 {
-			self.n_members
-		}
-		fn threshold(&self) -> u32 {
-			self.threshold
-		}
+		let nonce = b"2137".to_vec();
+		let randomness = Randomness { nonce, data };
+		assert!(!verifier.verify(randomness));
 	}
 
 	#[test]
 	fn reject_wrong_share() {
-		let key_box = TrivialKeyBox {
-			my_id: Some(0),
-			n_members: 10,
-			threshold: 3,
-		};
-		let wrong_share_1 = TrivialShare {
-			member_id: 11,
-			nonce: H256::default(),
-			actual_share: 11,
-		};
-		let wrong_share_2 = TrivialShare {
-			member_id: 8,
-			nonce: H256::default(),
-			actual_share: 0,
-		};
+		let data = b"00000000000000000000000000000000";
+		let _master_key = VerifyKey::from_slice(data);
+		let verifier = RandomnessVerifier::new(_master_key);
+		let seed = b"17291729172917291729172917291729";
+		let share_provider1 = ShareProvider::from_seed(seed);
+		let seed = b"21372137213721372137213721372137";
+		let share_provider2 = ShareProvider::from_seed(seed);
+		let verify_keys = vec![share_provider1.public(), share_provider2.public()];
+		let id = 0;
+		let n_members = 2;
+		let threshold = 1;
+		let keybox = KeyBox::new(id, share_provider1, verify_keys, verifier, threshold);
 
-		assert_eq!(key_box.verify_share(&wrong_share_1), false);
-		assert_eq!(key_box.verify_share(&wrong_share_2), false);
+		let nonce = b"1729".to_vec();
+		let mut share = keybox.generate_share(nonce);
+		assert!(keybox.verify_share(&share));
+		share.nonce = b"2137".to_vec();
+		assert!(!keybox.verify_share(&share));
+		share.nonce = b"1729".to_vec();
+		share.creator = 1;
+		assert!(!keybox.verify_share(&share));
 	}
 }

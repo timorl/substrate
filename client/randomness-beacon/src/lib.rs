@@ -25,11 +25,6 @@ const RANDOMNESS_BEACON_ID: [u8; 4] = *b"rndb";
 const RB_PROTOCOL_NAME: &'static str = "/randomness_beacon";
 pub const SEND_INTERVAL: time::Duration = time::Duration::from_secs(1);
 
-pub type RandomBytes = i64;
-// TODO: Nonce should be a hash so that Randomness-Beacon Pallet may choose the right one, but we
-// cannot make InherentType generic over BlockT. Figureout how to do it.
-pub type Nonce = Vec<u8>;
-
 pub const KEY_TYPE: sp_core::crypto::KeyTypeId = sp_application_crypto::key_types::DUMMY;
 mod app {
 	use sp_application_crypto::{app_crypto, ed25519, key_types::DUMMY};
