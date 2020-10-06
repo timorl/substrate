@@ -6118,6 +6118,7 @@ dependencies = [
  "sp-core",
  "sp-inherents",
  "sp-offchain",
+ "sp-randomness-beacon",
  "sp-runtime",
  "sp-session",
  "sp-std",
@@ -8401,12 +8402,12 @@ dependencies = [
  "log",
  "parity-scale-codec",
  "parking_lot 0.10.2",
+ "sp-api",
  "sp-application-crypto",
  "sp-core",
  "sp-inherents",
  "sp-runtime",
  "sp-std",
- "substrate-test-runtime-client",
 ]
 
 [[package]]

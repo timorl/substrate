@@ -6,10 +6,12 @@ use sc_network_gossip::{
 	GossipEngine, TopicNotification, ValidationResult, Validator, ValidatorContext,
 };
 
-use sp_core::traits::BareCryptoStorePtr;
+use sp_core::{crypto::Pair, traits::BareCryptoStorePtr};
 use sp_runtime::traits::Block as BlockT;
 
-use sp_randomness_beacon::inherents::InherentType;
+use sp_randomness_beacon::{
+	inherents::InherentType, KeyBox, Nonce, RandomnessVerifier, Share, ShareProvider,
+};
 
 use futures::{channel::mpsc::Receiver, prelude::*};
 use parking_lot::{Mutex, RwLock};
@@ -61,9 +63,11 @@ impl From<(AuthorityId, BareCryptoStorePtr)> for LocalIdKeystore {
 pub mod authorship;
 pub mod import;
 
+pub type ShareBytes = Vec<u8>;
+
 #[derive(Debug, Clone, Encode, Decode)]
 pub struct Message {
-	pub data: RandomBytes,
+	pub data: ShareBytes,
 }
 
 #[derive(Debug, Encode, Decode)]
@@ -144,15 +148,17 @@ impl<B: BlockT> OutgoingMessage<B> {
 }
 
 pub struct NetworkBridge<B: BlockT> {
-	id: i64,
+	threshold: usize,
 	topics: HashMap<
 		B::Hash,
 		(
 			Receiver<TopicNotification>,
 			OutgoingMessage<B>,
 			futures_timer::Delay,
+			Vec<Share>,
 		),
 	>,
+	keybox: KeyBox,
 	gossip_engine: Arc<Mutex<GossipEngine<B>>>,
 	validator: Arc<GossipValidator>,
 	randomness_nonce_rx: Receiver<Nonce>,
@@ -165,6 +171,8 @@ impl<B: BlockT> Unpin for NetworkBridge<B> {}
 impl<B: BlockT> NetworkBridge<B> {
 	pub fn new(
 		id: String,
+		n_members: usize,
+		threshold: usize,
 		randomness_nonce_rx: Receiver<Nonce>,
 		network: Arc<NetworkService<B, <B as BlockT>::Hash>>,
 		random_bytes: Arc<Mutex<InherentType>>,
@@ -177,10 +185,37 @@ impl<B: BlockT> NetworkBridge<B> {
 			RB_PROTOCOL_NAME,
 			validator.clone(),
 		)));
+		//let ids = ["alice", "bob", "charlie", "dave", "eve"];
+		let seeds = [
+			b"00000000000000000000000000000000",
+			b"00000000000000000000000000000001",
+			b"00000000000000000000000000000002",
+			b"00000000000000000000000000000003",
+			b"00000000000000000000000000000004",
+		];
+
+		assert!(n_members < seeds.len());
+		let mut verify_keys = Vec::new();
+		for i in 0..n_members {
+			verify_keys.push(ShareProvider::from_seed(seeds[i]).public());
+		}
+		let id = if id == "Alice" { 0 } else { 1 };
+		let share_provider = Pair::from_seed(seeds[id]);
+		let master_key = ShareProvider::from_seed(sp_randomness_beacon::MASTER_SEED).public();
+		// TODO: actually construct, milestone 2
+
+		let keybox = KeyBox::new(
+			id as u32,
+			share_provider,
+			verify_keys,
+			RandomnessVerifier::new(master_key),
+			threshold,
+		);
 
 		NetworkBridge {
-			id: if id == "Alice" { 0 } else { 1 },
+			threshold,
 			topics: HashMap::new(),
+			keybox,
 			gossip_engine,
 			validator,
 			randomness_nonce_rx,
@@ -196,7 +231,7 @@ impl<B: BlockT> NetworkBridge<B> {
 	fn round_communication(
 		&self,
 		nonce: Nonce,
-	) -> (Receiver<TopicNotification>, OutgoingMessage<B>) {
+	) -> (Receiver<TopicNotification>, OutgoingMessage<B>, Vec<Share>) {
 		// TODO: how to choose rounds?
 		let round = 0;
 		self.note_round(round);
@@ -224,7 +259,10 @@ impl<B: BlockT> NetworkBridge<B> {
 			})
 			.into_inner();
 
-		let msg = Message { data: self.id };
+		let share = self.keybox.generate_share(&nonce);
+		let msg = Message {
+			data: Encode::encode(&share),
+		};
 
 		let outgoing = OutgoingMessage::<B> {
 			msg,
@@ -232,7 +270,7 @@ impl<B: BlockT> NetworkBridge<B> {
 			gossip_engine: self.gossip_engine.clone(),
 		};
 
-		(incoming, outgoing)
+		(incoming, outgoing, vec![share])
 	}
 }
 
@@ -262,10 +300,10 @@ impl<B: BlockT> Future for NetworkBridge<B> {
 			// received new nonce, start collecting signatures for it
 			// TODO: some throttling
 			if !self.topics.contains_key(&topic) {
-				let (incoming, outgoing) = self.round_communication(new_nonce);
+				let (incoming, outgoing, shares) = self.round_communication(new_nonce);
 				let periodic_sender = futures_timer::Delay::new(SEND_INTERVAL);
 				self.topics
-					.insert(topic, (incoming, outgoing, periodic_sender));
+					.insert(topic, (incoming, outgoing, periodic_sender, shares));
 			}
 		}
 
@@ -277,9 +315,11 @@ impl<B: BlockT> Future for NetworkBridge<B> {
 		// TODO: refactor this awful borrow checker hack
 		let random_bytes = self.random_bytes.clone();
 		let randomness_ready_tx = self.randomness_ready_tx.clone();
+		let keybox = self.keybox.clone();
+		let threshold = self.threshold.clone();
 
 		// TODO: maybe parallelize
-		for (_, (incoming, outgoing, periodic_sender)) in self.topics.iter_mut() {
+		for (_, (incoming, outgoing, periodic_sender, shares)) in self.topics.iter_mut() {
 			while let Poll::Ready(()) = periodic_sender.poll_unpin(cx) {
 				periodic_sender.reset(SEND_INTERVAL);
 				outgoing.send();
@@ -290,18 +330,31 @@ impl<B: BlockT> Future for NetworkBridge<B> {
 				Poll::Ready(Some(notification)) => {
 					let GossipMessage { nonce, message } =
 						GossipMessage::decode(&mut &notification.message[..]).unwrap();
-					// combine shares and on succes put new random_bytes for InherentDataProvider
-					random_bytes
-						.lock()
-						.push((nonce.clone(), message.data.to_be_bytes().to_vec()));
-					if let Some(ref randomness_ready_tx) = randomness_ready_tx {
-						assert!( randomness_ready_tx.send(nonce).is_ok(), "problem with sending a notification that a new randomness is available");
+					let share: Share = Decode::decode(&mut &*message.data).unwrap();
+					if keybox.verify_share(&share) {
+						shares.push(share);
+						let mut randomness = None;
+						// TODO: the following needs an overhaul
+						if shares.len() == threshold {
+							randomness = keybox.combine_shares(shares);
+						}
+
+						// combine shares and on succes put new random_bytes for InherentDataProvider
+						if !randomness.is_none() {
+							let randomness = randomness.unwrap();
+							random_bytes
+								.lock()
+								.push((nonce.clone(), Encode::encode(&randomness)));
+							if let Some(ref randomness_ready_tx) = randomness_ready_tx {
+								assert!( randomness_ready_tx.send(nonce).is_ok(), "problem with sending a notification that a new randomness is available");
+							}
+							info!(
+								target: RB_PROTOCOL_NAME,
+								"Len of random_bytes: {:?}",
+								random_bytes.lock().len()
+							);
+						}
 					}
-					info!(
-						target: RB_PROTOCOL_NAME,
-						"Len of random_bytes: {:?}",
-						random_bytes.lock().len()
-					);
 				}
 				Poll::Ready(None) => info!(
 					target: RB_PROTOCOL_NAME,

@@ -10,7 +10,10 @@ use sp_consensus::{
 	BlockCheckParams, BlockImport, BlockImportParams, Error as ConsensusError, ImportResult,
 };
 use sp_inherents::InherentDataProviders;
-use sp_randomness_beacon::inherents::{register_rb_inherent_data_provider, InherentType};
+use sp_randomness_beacon::{
+	inherents::{register_rb_inherent_data_provider, InherentType},
+	Nonce,
+};
 
 use sp_runtime::{
 	generic::BlockId,
@@ -33,13 +36,13 @@ impl std::convert::From<Error> for ConsensusError {
 	}
 }
 
-use super::{Nonce, RandomBytes};
+use super::ShareBytes;
 
 pub struct RandomnessBeaconBlockImport<B: BlockT, I, C> {
 	inner: I,
 	client: Arc<C>,
 	random_bytes: Arc<Mutex<InherentType>>,
-	random_bytes_buf: HashMap<Nonce, Option<RandomBytes>>,
+	random_bytes_buf: HashMap<Nonce, Option<ShareBytes>>,
 	randomness_nonce_tx: Sender<Nonce>,
 	check_inherents_after: <<B as BlockT>::Header as HeaderT>::Number,
 	inherent_data_providers: InherentDataProviders,

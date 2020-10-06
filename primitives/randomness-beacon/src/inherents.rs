@@ -1,5 +1,3 @@
-#![cfg_attr(not(feature = "std"), no_std)]
-
 use codec::Encode;
 use sp_std::vec::Vec;
 
@@ -30,6 +28,7 @@ pub struct InherentDataProvider {
 pub enum InherentError {
 	WrongHeight,
 	InvalidRandomBytes,
+	VerifyKeyNotSet,
 }
 
 impl InherentError {
@@ -48,6 +47,7 @@ impl IsFatalError for InherentError {
 		match self {
 			InherentError::WrongHeight => true,
 			InherentError::InvalidRandomBytes => true,
+			InherentError::VerifyKeyNotSet => true,
 		}
 	}
 }

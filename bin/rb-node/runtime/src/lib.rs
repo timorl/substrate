@@ -357,7 +357,14 @@ impl_runtime_apis! {
 		}
 
 		fn random_seed() -> <Block as BlockT>::Hash {
+			// TODO: replace with beacon when it's ready
 			RandomnessCollectiveFlip::random_seed()
+		}
+	}
+
+	impl sp_randomness_beacon::RandomnessBeaconApi<Block> for Runtime{
+		fn set_randomness_verifier(verifier: sp_randomness_beacon::VerifyKey) {
+			RandomnessBeacon::set_randomness_verifier(verifier)
 		}
 	}
 

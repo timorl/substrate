@@ -16,8 +16,8 @@ use sp_core::crypto::key_types::DUMMY;
 use sp_inherents::InherentDataProviders;
 use std::sync::Arc;
 
-use randomness_beacon::{import::RandomnessBeaconBlockImport, NetworkBridge, Nonce};
-use sp_randomness_beacon::inherents::InherentType;
+use randomness_beacon::{import::RandomnessBeaconBlockImport, NetworkBridge};
+use sp_randomness_beacon::{inherents::InherentType, Nonce};
 
 // Our native executor instance.
 native_executor_instance!(
@@ -193,6 +193,18 @@ pub fn new_full(config: Configuration) -> Result<TaskManager, ServiceError> {
 
 	let mut randomness_notifier_tx = None;
 	if role.is_authority() {
+		use sp_core::crypto::Pair;
+		let master_key =
+			sp_randomness_beacon::ShareProvider::from_seed(sp_randomness_beacon::MASTER_SEED)
+				.public();
+		use sp_api::ProvideRuntimeApi;
+		use sp_randomness_beacon::RandomnessBeaconApi;
+		use sp_runtime::generic::BlockId;
+		use sp_runtime::traits::Zero;
+		client
+			.runtime_api()
+			.set_randomness_verifier(&BlockId::Number(Zero::zero()), master_key)?;
+
 		let (randomness_ready_tx, randomness_notifier_rx) = std::sync::mpsc::channel();
 		randomness_notifier_tx = Some(randomness_ready_tx);
 		// the following var could be a plain randomness_notifier_rx if it implemented send Trait
@@ -229,8 +241,13 @@ pub fn new_full(config: Configuration) -> Result<TaskManager, ServiceError> {
 			.spawn_blocking("aura", aura);
 	}
 
+	// TODO: should be read from config
+	let n_members = 2;
+	let threshold = 2;
 	let nb = NetworkBridge::new(
 		name,
+		n_members,
+		threshold,
 		randomness_nonce_rx,
 		network,
 		random_bytes,

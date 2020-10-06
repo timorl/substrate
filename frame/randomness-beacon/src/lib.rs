@@ -18,11 +18,14 @@
 #![cfg_attr(not(feature = "std"), no_std)]
 
 use codec::{Decode, Encode};
-use frame_support::{decl_error, decl_module, decl_storage, weights::Weight};
+use frame_support::{decl_error, decl_module, decl_storage, traits::Randomness, weights::Weight};
 use frame_system::ensure_none;
 use sp_inherents::{InherentData, InherentIdentifier, ProvideInherent};
-use sp_randomness_beacon::inherents::{InherentError, INHERENT_IDENTIFIER};
-use sp_runtime;
+use sp_randomness_beacon::{
+	inherents::{InherentError, INHERENT_IDENTIFIER},
+	VerifyKey,
+};
+use sp_runtime::print;
 use sp_std::{result, vec::Vec};
 
 const START_BEACON_HEIGHT: u32 = 2;
@@ -37,6 +40,8 @@ decl_storage! {
 		SeedByHeight: map hasher(blake2_128_concat) T::BlockNumber => Vec<u8>;
 		/// Was random_bytes was set in this block?
 		DidUpdate: bool;
+		/// Stores verifier needed to check randomness in blocks
+		RandomnessVerifier get(fn verifier): VerifyKey;
 	}
 }
 
@@ -49,7 +54,6 @@ decl_error! {
 decl_module! {
 	pub struct Module<T: Trait> for enum Call where origin: T::Origin {
 		type Error = Error<T>;
-
 
 		fn on_initialize(now: T::BlockNumber) -> Weight {
 			0
@@ -73,6 +77,12 @@ decl_module! {
 	}
 }
 
+impl<T: Trait> Module<T> {
+	pub fn set_randomness_verifier(verifier: VerifyKey) {
+		<Self as Store>::RandomnessVerifier::put(verifier)
+	}
+}
+
 pub trait RandomSeedInherentData<H: Decode + Eq> {
 	/// Get random random_bytes for hash or None
 	fn get_random_bytes(&self, block_hash: H) -> Option<Vec<u8>>;
@@ -80,11 +90,11 @@ pub trait RandomSeedInherentData<H: Decode + Eq> {
 
 impl<H: Decode + Eq> RandomSeedInherentData<H> for InherentData {
 	fn get_random_bytes(&self, block_hash: H) -> Option<Vec<u8>> {
-		sp_runtime::print("in get_random_bytes");
+		print("in get_random_bytes");
 		let list_hash_random_bytes: Option<Vec<(H, Vec<u8>)>> =
 			self.get_data(&INHERENT_IDENTIFIER).unwrap_or_default();
 		if list_hash_random_bytes.is_none() {
-			sp_runtime::print("get_data output none, it means random_bytes not available yet");
+			print("get_data output none, it means random_bytes not available yet");
 			return None;
 		}
 		for (hash, random_bytes) in list_hash_random_bytes.unwrap() {
@@ -96,11 +106,6 @@ impl<H: Decode + Eq> RandomSeedInherentData<H> for InherentData {
 	}
 }
 
-// TODO: implement after adding some keys
-fn check_random_bytes(_nonce: Vec<u8>, _random_bytes: Vec<u8>) -> bool {
-	true
-}
-
 use sp_std::convert::TryInto;
 
 impl<T: Trait> ProvideInherent for Module<T> {
@@ -110,7 +115,7 @@ impl<T: Trait> ProvideInherent for Module<T> {
 
 	fn create_inherent(data: &InherentData) -> Option<Self::Call> {
 		let now = <frame_system::Module<T>>::block_number();
-		sp_runtime::print((
+		print((
 			"create_inherent block height: ",
 			now.try_into().unwrap_or_default(),
 		));
@@ -126,10 +131,18 @@ impl<T: Trait> ProvideInherent for Module<T> {
 
 	fn check_inherent(call: &Self::Call, _: &InherentData) -> result::Result<(), Self::Error> {
 		let now = <frame_system::Module<T>>::block_number();
-		sp_runtime::print((
+		print((
 			"check_inherent block height: ",
 			now.try_into().unwrap_or_default(),
 		));
+		if now < T::BlockNumber::from(START_BEACON_HEIGHT) {
+			return Ok(());
+		}
+
+		if !<Self as Store>::RandomnessVerifier::exists() {
+			return Err(sp_randomness_beacon::inherents::InherentError::VerifyKeyNotSet);
+		}
+
 		let (height, random_bytes) = match call {
 			Call::set_random_bytes(ref height, ref random_bytes) => {
 				(height.clone(), random_bytes.clone())
@@ -144,9 +157,18 @@ impl<T: Trait> ProvideInherent for Module<T> {
 		let parent_hash = <frame_system::Module<T>>::parent_hash();
 		let parent_nonce = Encode::encode(&parent_hash);
 
-		if !check_random_bytes(parent_nonce, random_bytes) {
+		let verify_key = Self::verifier();
+		let randomness: sp_randomness_beacon::Randomness = (parent_nonce, random_bytes).into();
+		if !sp_randomness_beacon::verify_randomness(&verify_key, randomness) {
 			return Err(sp_randomness_beacon::inherents::InherentError::InvalidRandomBytes);
 		}
 		Ok(())
+	}
+}
+
+impl<T: Trait> Randomness<T::Hash> for Module<T> {
+	// TODO: implement
+	fn random(_subject: &[u8]) -> T::Hash {
+		T::Hash::default()
 	}
 }
