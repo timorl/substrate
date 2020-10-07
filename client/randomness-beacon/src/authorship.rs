@@ -65,7 +65,7 @@ where
 		let parent_number = *parent_header.number();
 		let mut proposer_nonce = None;
 		// TODO should use global constant
-		if parent_number > 1.into() {
+		if parent_number >= 1.into() {
 			let parent_hash = parent_header.hash();
 			let nonce = <Block as BlockT>::Hash::encode(&parent_hash);
 			proposer_nonce = Some(nonce);

@@ -17,7 +17,7 @@
 
 #![cfg_attr(not(feature = "std"), no_std)]
 
-use codec::{Decode, Encode};
+use codec::{Encode};
 use frame_support::{decl_error, decl_module, decl_storage, traits::Randomness, weights::Weight};
 use frame_system::ensure_none;
 use sp_inherents::{InherentData, InherentIdentifier, ProvideInherent};
@@ -83,16 +83,18 @@ impl<T: Trait> Module<T> {
 	}
 }
 
-pub trait RandomSeedInherentData<H: Decode + Eq> {
-	/// Get random random_bytes for hash or None
-	fn get_random_bytes(&self, block_hash: H) -> Option<Vec<u8>>;
+pub trait RandomSeedInherentData {
+	/// Get random random_bytes
+	fn get_random_bytes(&self) -> Vec<u8>;
 }
 
-impl<H: Decode + Eq> RandomSeedInherentData<H> for InherentData {
+impl RandomSeedInherentData for InherentData {
 	fn get_random_bytes(&self) -> Vec<u8> {
 		print("in get_random_bytes");
-		let random_bytes: Vec<u8> = self.get_data(&INHERENT_IDENTIFIER);
-		//assert!(random_bytes.is_ok(), "Panic because inherent_data does not contain random bytes");
+		let random_bytes: Result<Option<Vec<u8>>, _> = self.get_data(&INHERENT_IDENTIFIER);
+		assert!(random_bytes.is_ok(), "Panic because of error in retrieving inherent_data.");
+		let random_bytes = random_bytes.unwrap_or_default();
+		assert!(random_bytes.is_some(), "Panic because no random_bytes found in inherent_data.");
 		return random_bytes.unwrap_or_default();
 	}
 }
@@ -111,8 +113,7 @@ impl<T: Trait> ProvideInherent for Module<T> {
 			now.try_into().unwrap_or_default(),
 		));
 		if now >= T::BlockNumber::from(START_BEACON_HEIGHT) {
-			//let parent_hash = <frame_system::Module<T>>::parent_hash();
-			//return  Some(Self::Call::set_random_bytes(now, get_random_bytes())));
+			return  Some(Self::Call::set_random_bytes(now, data.get_random_bytes()));
 		}
 		None
 	}

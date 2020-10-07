@@ -191,7 +191,7 @@ pub fn new_full(config: Configuration) -> Result<TaskManager, ServiceError> {
 		config,
 	})?;
 
-	let mut randomness_notifier_tx = None;
+	let mut randomness_bytes_tx = None;
 	if role.is_authority() {
 		use sp_core::crypto::Pair;
 		let master_key =
@@ -205,17 +205,17 @@ pub fn new_full(config: Configuration) -> Result<TaskManager, ServiceError> {
 			.runtime_api()
 			.set_randomness_verifier(&BlockId::Number(Zero::zero()), master_key)?;
 
-		let (randomness_ready_tx, randomness_notifier_rx) = std::sync::mpsc::channel();
-		randomness_notifier_tx = Some(randomness_ready_tx);
+		let (tx, randomness_bytes_rx) = std::sync::mpsc::channel();
+		randomness_bytes_tx = Some(tx);
 		// the following var could be a plain randomness_notifier_rx if it implemented send Trait
 		// as it does not, then we pack it in Arc<Mutex<_>>
-		let randomness_notifier_rx = Arc::new(Mutex::new(randomness_notifier_rx));
+		let randomness_bytes_rx = Arc::new(Mutex::new(randomness_bytes_rx));
 
 		let proposer = randomness_beacon::authorship::ProposerFactory::new(
 			client.clone(),
 			transaction_pool,
 			prometheus_registry.as_ref(),
-			randomness_notifier_rx,
+			randomness_bytes_rx,
 		);
 
 		let can_author_with =
@@ -251,7 +251,7 @@ pub fn new_full(config: Configuration) -> Result<TaskManager, ServiceError> {
 		randomness_nonce_rx,
 		network,
 		random_bytes,
-		randomness_notifier_tx,
+		randomness_bytes_tx,
 	);
 
 	task_manager.spawn_handle().spawn("network bridge", nb);

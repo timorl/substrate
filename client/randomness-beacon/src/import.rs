@@ -11,7 +11,7 @@ use sp_consensus::{
 };
 use sp_inherents::InherentDataProviders;
 use sp_randomness_beacon::{
-	inherents::{register_rb_inherent_data_provider, InherentType},
+	inherents::InherentType,
 	Nonce,
 };
 
