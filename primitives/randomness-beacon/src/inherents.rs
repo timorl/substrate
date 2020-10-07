@@ -1,5 +1,4 @@
 use codec::Encode;
-use sp_std::vec::Vec;
 
 #[cfg(feature = "std")]
 use log::info;
@@ -14,8 +13,9 @@ use codec::Decode;
 use sp_inherents::{InherentData, InherentDataProviders, ProvideInherentData};
 use sp_inherents::{InherentIdentifier, IsFatalError};
 
+use super::{Nonce, Randomness};
 pub const INHERENT_IDENTIFIER: InherentIdentifier = *b"randbecn";
-pub type InherentType = Vec<(Vec<u8>, Vec<u8>)>;
+pub type InherentType = (Nonce, Randomness);
 
 #[cfg(feature = "std")]
 pub struct InherentDataProvider {
@@ -62,10 +62,6 @@ impl ProvideInherentData for InherentDataProvider {
 		&self,
 		inherent_data: &mut InherentData,
 	) -> Result<(), sp_inherents::Error> {
-		info!(
-			"Providing Inherent data of len {:?}",
-			self.random_bytes.lock().len()
-		);
 		let id = (*self.random_bytes.lock()).clone();
 		info!("Putting {:?}", id);
 		let result = inherent_data.put_data(INHERENT_IDENTIFIER, &id);

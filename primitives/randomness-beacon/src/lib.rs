@@ -16,6 +16,10 @@ sp_application_crypto::with_pair! {
 }
 
 pub const MASTER_SEED: &[u8; 32] = b"12345678901234567890123456789012";
+const MASTER_MATERIAL: [u8; 32] = [
+	47, 140, 97, 41, 216, 22, 207, 81, 195, 116, 188, 127, 8, 195, 230, 62, 209, 86, 207, 120, 174,
+	251, 74, 101, 80, 217, 123, 135, 153, 121, 119, 238,
+];
 
 pub type VerifyKey = app::Public;
 
@@ -27,15 +31,21 @@ pub struct Share {
 	data: app::Signature,
 }
 
-#[derive(Encode, Decode)]
+#[derive(Encode, Decode, Clone, Debug, Default)]
 pub struct Randomness {
 	nonce: Nonce,
 	data: app::Signature,
 }
 
+impl Randomness {
+	pub fn nonce(&self) -> Nonce {
+		self.nonce.clone()
+	}
+}
+
 impl From<(Nonce, Vec<u8>)> for Randomness {
 	fn from((nonce, random_bytes): (Nonce, Vec<u8>)) -> Randomness {
-		let nonce = Encode::encode(&nonce);
+		let nonce = nonce.clone();
 		let data = app::Signature::decode(&mut &random_bytes[..]).unwrap();
 		Randomness { nonce, data }
 	}
@@ -47,6 +57,10 @@ pub fn verify_randomness(verify_key: &VerifyKey, randomness: Randomness) -> bool
 		&randomness.nonce,
 		&randomness.data,
 	)
+}
+
+pub fn generate_verify_key() -> VerifyKey {
+	sp_application_crypto::ed25519::Public::from_raw(MASTER_MATERIAL).into()
 }
 
 #[derive(Clone)]
@@ -65,12 +79,6 @@ impl RandomnessVerifier {
 			&randomness.nonce,
 			&randomness.data,
 		)
-	}
-}
-
-sp_api::decl_runtime_apis! {
-	pub trait RandomnessBeaconApi {
-		fn set_randomness_verifier(verifier: VerifyKey);
 	}
 }
 
@@ -179,9 +187,8 @@ mod tests {
 
 	#[test]
 	fn reject_wrong_randomness() {
-		let data = b"00000000000000000000000000000000";
-		let _master_key = VerifyKey::from_slice(data);
-		let verifier = RandomnessVerifier::new(_master_key);
+		let master_key = generate_verify_key();
+		let verifier = RandomnessVerifier::new(master_key);
 
 		let master_key = ShareProvider::from_seed(MASTER_SEED);
 

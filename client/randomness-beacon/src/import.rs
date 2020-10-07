@@ -1,7 +1,6 @@
 use codec::Encode;
 use futures::channel::mpsc::Sender;
 use log::info;
-use parking_lot::Mutex;
 use sc_client_api::{backend::AuxStore, BlockOf};
 use sp_api::ProvideRuntimeApi;
 use sp_block_builder::BlockBuilder as BlockBuilderApi;
@@ -10,10 +9,7 @@ use sp_consensus::{
 	BlockCheckParams, BlockImport, BlockImportParams, Error as ConsensusError, ImportResult,
 };
 use sp_inherents::InherentDataProviders;
-use sp_randomness_beacon::{
-	inherents::InherentType,
-	Nonce,
-};
+use sp_randomness_beacon::Nonce;
 
 use sp_runtime::{
 	generic::BlockId,
@@ -41,7 +37,6 @@ use super::ShareBytes;
 pub struct RandomnessBeaconBlockImport<B: BlockT, I, C> {
 	inner: I,
 	client: Arc<C>,
-	random_bytes: Arc<Mutex<InherentType>>,
 	random_bytes_buf: HashMap<Nonce, Option<ShareBytes>>,
 	randomness_nonce_tx: Sender<Nonce>,
 	check_inherents_after: <<B as BlockT>::Header as HeaderT>::Number,
@@ -53,7 +48,6 @@ impl<B: BlockT, I: Clone, C> Clone for RandomnessBeaconBlockImport<B, I, C> {
 		Self {
 			inner: self.inner.clone(),
 			client: self.client.clone(),
-			random_bytes: self.random_bytes.clone(),
 			random_bytes_buf: self.random_bytes_buf.clone(),
 			randomness_nonce_tx: self.randomness_nonce_tx.clone(),
 			check_inherents_after: self.check_inherents_after.clone(),
@@ -75,7 +69,6 @@ where
 		client: Arc<C>,
 		randomness_nonce_tx: Sender<Nonce>,
 		check_inherents_after: <<B as BlockT>::Header as HeaderT>::Number,
-		random_bytes: Arc<Mutex<InherentType>>,
 		inherent_data_providers: InherentDataProviders,
 	) -> Self {
 		//register_rb_inherent_data_provider(&inherent_data_providers, random_bytes.clone());
@@ -83,26 +76,12 @@ where
 		Self {
 			inner,
 			client,
-			random_bytes,
 			random_bytes_buf: HashMap::new(),
 			randomness_nonce_tx,
 			check_inherents_after,
 			inherent_data_providers,
 		}
 	}
-
-	// Note: this works under the assumption that in a block there is seed corresponding to a
-	// hash of the parent of the current block. If we were to allow skipping randomness in some
-	// blocks, then we would need to read parent_nonce from inherents in current block.
-	// fn clear_old_random_bytes(&mut self, parent_hash: <B as BlockT>::Hash) {
-	// 	let parent_nonce = <B as BlockT>::Hash::encode(&parent_hash);
-
-	// 	self.random_bytes_buf.remove(&parent_nonce);
-	// 	self.random_bytes
-	// 		.lock()
-	// 		.retain(|(nonce, _)| nonce[..] != parent_nonce[..]);
-	// }
-
 	// TODO: Nonce should be a hash so that Randomness-Beacon Pallet may choose the right one, but we
 	// cannot make InherentType generic over BlockT. Figureout how to do it optimally. Current
 	// approximation uses Vec<u8>.

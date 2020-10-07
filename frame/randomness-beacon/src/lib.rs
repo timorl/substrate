@@ -17,13 +17,15 @@
 
 #![cfg_attr(not(feature = "std"), no_std)]
 
-use codec::{Encode};
-use frame_support::{decl_error, decl_module, decl_storage, traits::Randomness, weights::Weight};
+use codec::{Decode, Encode};
+use frame_support::{
+	decl_error, decl_module, decl_storage, traits::Randomness as RandomnessT, weights::Weight,
+};
 use frame_system::ensure_none;
 use sp_inherents::{InherentData, InherentIdentifier, ProvideInherent};
 use sp_randomness_beacon::{
 	inherents::{InherentError, INHERENT_IDENTIFIER},
-	VerifyKey,
+	Randomness, VerifyKey,
 };
 use sp_runtime::print;
 use sp_std::{result, vec::Vec};
@@ -56,6 +58,10 @@ decl_module! {
 		type Error = Error<T>;
 
 		fn on_initialize(now: T::BlockNumber) -> Weight {
+			if now == 1.into() && !<Self as Store>::RandomnessVerifier::exists() {
+				 <Self as Store>::RandomnessVerifier::set(sp_randomness_beacon::generate_verify_key());
+			}
+
 			0
 		}
 
@@ -90,12 +96,18 @@ pub trait RandomSeedInherentData {
 
 impl RandomSeedInherentData for InherentData {
 	fn get_random_bytes(&self) -> Vec<u8> {
-		print("in get_random_bytes");
-		let random_bytes: Result<Option<Vec<u8>>, _> = self.get_data(&INHERENT_IDENTIFIER);
-		assert!(random_bytes.is_ok(), "Panic because of error in retrieving inherent_data.");
-		let random_bytes = random_bytes.unwrap_or_default();
-		assert!(random_bytes.is_some(), "Panic because no random_bytes found in inherent_data.");
-		return random_bytes.unwrap_or_default();
+		let randomness: Result<Option<Randomness>, _> = self.get_data(&INHERENT_IDENTIFIER);
+		assert!(
+			randomness.is_ok(),
+			"Panic because of error in retrieving inherent_data with err {:?}.",
+			randomness.err().unwrap()
+		);
+		let randomness = randomness.unwrap();
+		assert!(
+			randomness.is_some(),
+			"Panic because no random_bytes found in inherent_data."
+		);
+		Randomness::encode(&randomness.unwrap())
 	}
 }
 
@@ -113,7 +125,7 @@ impl<T: Trait> ProvideInherent for Module<T> {
 			now.try_into().unwrap_or_default(),
 		));
 		if now >= T::BlockNumber::from(START_BEACON_HEIGHT) {
-			return  Some(Self::Call::set_random_bytes(now, data.get_random_bytes()));
+			return Some(Self::Call::set_random_bytes(now, data.get_random_bytes()));
 		}
 		None
 	}
@@ -143,11 +155,8 @@ impl<T: Trait> ProvideInherent for Module<T> {
 			return Err(sp_randomness_beacon::inherents::InherentError::WrongHeight);
 		}
 
-		let parent_hash = <frame_system::Module<T>>::parent_hash();
-		let parent_nonce = Encode::encode(&parent_hash);
-
 		let verify_key = Self::verifier();
-		let randomness: sp_randomness_beacon::Randomness = (parent_nonce, random_bytes).into();
+		let randomness = Randomness::decode(&mut &*random_bytes).unwrap();
 		if !sp_randomness_beacon::verify_randomness(&verify_key, randomness) {
 			return Err(sp_randomness_beacon::inherents::InherentError::InvalidRandomBytes);
 		}
@@ -155,7 +164,7 @@ impl<T: Trait> ProvideInherent for Module<T> {
 	}
 }
 
-impl<T: Trait> Randomness<T::Hash> for Module<T> {
+impl<T: Trait> RandomnessT<T::Hash> for Module<T> {
 	// TODO: implement
 	fn random(_subject: &[u8]) -> T::Hash {
 		T::Hash::default()

@@ -362,12 +362,6 @@ impl_runtime_apis! {
 		}
 	}
 
-	impl sp_randomness_beacon::RandomnessBeaconApi<Block> for Runtime{
-		fn set_randomness_verifier(verifier: sp_randomness_beacon::VerifyKey) {
-			RandomnessBeacon::set_randomness_verifier(verifier)
-		}
-	}
-
 	impl sp_transaction_pool::runtime_api::TaggedTransactionQueue<Block> for Runtime {
 		fn validate_transaction(
 			source: TransactionSource,

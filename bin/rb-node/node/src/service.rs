@@ -17,7 +17,7 @@ use sp_inherents::InherentDataProviders;
 use std::sync::Arc;
 
 use randomness_beacon::{import::RandomnessBeaconBlockImport, NetworkBridge};
-use sp_randomness_beacon::{inherents::InherentType, Nonce};
+use sp_randomness_beacon::Nonce;
 
 // Our native executor instance.
 native_executor_instance!(
@@ -41,7 +41,6 @@ pub fn new_partial(
 		sc_transaction_pool::FullPool<Block, FullClient>,
 		(
 			Receiver<Nonce>,
-			Arc<Mutex<InherentType>>,
 			RandomnessBeaconBlockImport<
 				Block,
 				GrandpaBlockImport<FullBackend, Block, FullClient, FullSelectChain>,
@@ -73,13 +72,11 @@ pub fn new_partial(
 	)?;
 
 	let (tx, rx) = channel(10);
-	let random_bytes = Arc::new(Mutex::new(Vec::new()));
 	let rb_gossip_block_import = RandomnessBeaconBlockImport::new(
 		grandpa_block_import.clone(),
 		client.clone(),
 		tx,
 		1,
-		random_bytes.clone(),
 		inherent_data_providers.clone(),
 	);
 	let aura_block_import = sc_consensus_aura::AuraBlockImport::<_, _, _, AuraPair>::new(
@@ -108,7 +105,7 @@ pub fn new_partial(
 		select_chain,
 		transaction_pool,
 		inherent_data_providers,
-		other: (rx, random_bytes, rb_gossip_block_import),
+		other: (rx, rb_gossip_block_import),
 	})
 }
 
@@ -123,7 +120,7 @@ pub fn new_full(config: Configuration) -> Result<TaskManager, ServiceError> {
 		keystore,
 		transaction_pool,
 		inherent_data_providers,
-		other: (randomness_nonce_rx, random_bytes, block_import),
+		other: (randomness_nonce_rx, block_import),
 		..
 	} = new_partial(&config)?;
 
@@ -191,31 +188,19 @@ pub fn new_full(config: Configuration) -> Result<TaskManager, ServiceError> {
 		config,
 	})?;
 
-	let mut randomness_bytes_tx = None;
+	let mut randomness_tx = None;
 	if role.is_authority() {
-		use sp_core::crypto::Pair;
-		let master_key =
-			sp_randomness_beacon::ShareProvider::from_seed(sp_randomness_beacon::MASTER_SEED)
-				.public();
-		use sp_api::ProvideRuntimeApi;
-		use sp_randomness_beacon::RandomnessBeaconApi;
-		use sp_runtime::generic::BlockId;
-		use sp_runtime::traits::Zero;
-		client
-			.runtime_api()
-			.set_randomness_verifier(&BlockId::Number(Zero::zero()), master_key)?;
-
-		let (tx, randomness_bytes_rx) = std::sync::mpsc::channel();
-		randomness_bytes_tx = Some(tx);
+		let (tx, randomness_rx) = std::sync::mpsc::channel();
+		randomness_tx = Some(tx);
 		// the following var could be a plain randomness_notifier_rx if it implemented send Trait
 		// as it does not, then we pack it in Arc<Mutex<_>>
-		let randomness_bytes_rx = Arc::new(Mutex::new(randomness_bytes_rx));
+		let randomness_rx = Arc::new(Mutex::new(randomness_rx));
 
 		let proposer = randomness_beacon::authorship::ProposerFactory::new(
 			client.clone(),
 			transaction_pool,
 			prometheus_registry.as_ref(),
-			randomness_bytes_rx,
+			randomness_rx,
 		);
 
 		let can_author_with =
@@ -250,8 +235,7 @@ pub fn new_full(config: Configuration) -> Result<TaskManager, ServiceError> {
 		threshold,
 		randomness_nonce_rx,
 		network,
-		random_bytes,
-		randomness_bytes_tx,
+		randomness_tx,
 	);
 
 	task_manager.spawn_handle().spawn("network bridge", nb);
