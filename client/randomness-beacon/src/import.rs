@@ -78,7 +78,7 @@ where
 		random_bytes: Arc<Mutex<InherentType>>,
 		inherent_data_providers: InherentDataProviders,
 	) -> Self {
-		register_rb_inherent_data_provider(&inherent_data_providers, random_bytes.clone());
+		//register_rb_inherent_data_provider(&inherent_data_providers, random_bytes.clone());
 
 		Self {
 			inner,
@@ -90,8 +90,6 @@ where
 			inherent_data_providers,
 		}
 	}
-
-	// This should simply
 
 	// Note: this works under the assumption that in a block there is seed corresponding to a
 	// hash of the parent of the current block. If we were to allow skipping randomness in some

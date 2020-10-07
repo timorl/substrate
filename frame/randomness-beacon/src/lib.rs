@@ -89,20 +89,11 @@ pub trait RandomSeedInherentData<H: Decode + Eq> {
 }
 
 impl<H: Decode + Eq> RandomSeedInherentData<H> for InherentData {
-	fn get_random_bytes(&self, block_hash: H) -> Option<Vec<u8>> {
+	fn get_random_bytes(&self) -> Vec<u8> {
 		print("in get_random_bytes");
-		let list_hash_random_bytes: Option<Vec<(H, Vec<u8>)>> =
-			self.get_data(&INHERENT_IDENTIFIER).unwrap_or_default();
-		if list_hash_random_bytes.is_none() {
-			print("get_data output none, it means random_bytes not available yet");
-			return None;
-		}
-		for (hash, random_bytes) in list_hash_random_bytes.unwrap() {
-			if hash == block_hash {
-				return Some(random_bytes);
-			}
-		}
-		None
+		let random_bytes: Vec<u8> = self.get_data(&INHERENT_IDENTIFIER);
+		//assert!(random_bytes.is_ok(), "Panic because inherent_data does not contain random bytes");
+		return random_bytes.unwrap_or_default();
 	}
 }
 
@@ -120,11 +111,8 @@ impl<T: Trait> ProvideInherent for Module<T> {
 			now.try_into().unwrap_or_default(),
 		));
 		if now >= T::BlockNumber::from(START_BEACON_HEIGHT) {
-			let parent_hash = <frame_system::Module<T>>::parent_hash();
-			return match data.get_random_bytes(parent_hash.encode()) {
-				Some(random_bytes) => Some(Self::Call::set_random_bytes(now, random_bytes)),
-				None => None,
-			};
+			//let parent_hash = <frame_system::Module<T>>::parent_hash();
+			//return  Some(Self::Call::set_random_bytes(now, get_random_bytes())));
 		}
 		None
 	}

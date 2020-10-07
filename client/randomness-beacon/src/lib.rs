@@ -162,7 +162,7 @@ pub struct NetworkBridge<B: BlockT> {
 	gossip_engine: Arc<Mutex<GossipEngine<B>>>,
 	validator: Arc<GossipValidator>,
 	randomness_nonce_rx: Receiver<Nonce>,
-	randomness_ready_tx: Option<Sender<Nonce>>,
+	randomness_bytes_tx: Option<Sender<(Nonce, Vec<u8>)>>,
 	random_bytes: Arc<Mutex<InherentType>>,
 }
 
@@ -176,7 +176,7 @@ impl<B: BlockT> NetworkBridge<B> {
 		randomness_nonce_rx: Receiver<Nonce>,
 		network: Arc<NetworkService<B, <B as BlockT>::Hash>>,
 		random_bytes: Arc<Mutex<InherentType>>,
-		randomness_ready_tx: Option<Sender<Nonce>>,
+		randomness_bytes_tx: Option<Sender<(Nonce, Vec<u8>)>>,
 	) -> Self {
 		let validator = Arc::new(GossipValidator::new());
 		let gossip_engine = Arc::new(Mutex::new(GossipEngine::new(
@@ -219,7 +219,7 @@ impl<B: BlockT> NetworkBridge<B> {
 			gossip_engine,
 			validator,
 			randomness_nonce_rx,
-			randomness_ready_tx,
+			randomness_bytes_tx,
 			random_bytes,
 		}
 	}
@@ -314,7 +314,7 @@ impl<B: BlockT> Future for NetworkBridge<B> {
 
 		// TODO: refactor this awful borrow checker hack
 		let random_bytes = self.random_bytes.clone();
-		let randomness_ready_tx = self.randomness_ready_tx.clone();
+		let randomness_bytes_tx = self.randomness_bytes_tx.clone();
 		let keybox = self.keybox.clone();
 		let threshold = self.threshold.clone();
 
@@ -340,13 +340,14 @@ impl<B: BlockT> Future for NetworkBridge<B> {
 						}
 
 						// combine shares and on succes put new random_bytes for InherentDataProvider
-						if !randomness.is_none() {
+						if randomness.is_some() {
 							let randomness = randomness.unwrap();
-							random_bytes
-								.lock()
-								.push((nonce.clone(), Encode::encode(&randomness)));
-							if let Some(ref randomness_ready_tx) = randomness_ready_tx {
-								assert!( randomness_ready_tx.send(nonce).is_ok(), "problem with sending a notification that a new randomness is available");
+							//random_bytes
+							//	.lock()
+							//	.push();
+							if let Some(ref randomness_bytes_tx) = randomness_bytes_tx {
+								let data = (nonce.clone(), Encode::encode(&randomness));
+								assert!( randomness_bytes_tx.send(data).is_ok(), "problem with sending newly available random_bytes to the block proposer");
 							}
 							info!(
 								target: RB_PROTOCOL_NAME,
