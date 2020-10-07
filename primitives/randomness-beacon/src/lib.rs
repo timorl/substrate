@@ -154,10 +154,9 @@ impl KeyBox {
 		}
 
 		// TODO: replace the following mock
-		Some(Randomness {
-			nonce: nonce.clone(),
-			data: app::Signature::default(),
-		})
+		let master_key = ShareProvider::from_seed(MASTER_SEED);
+		let data = master_key.sign(&nonce);
+		Some(Randomness { nonce, data })
 	}
 
 	pub fn verify_randomness(&self, randomness: Randomness) -> bool {
