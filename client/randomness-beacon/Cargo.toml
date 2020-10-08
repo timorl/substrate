@@ -1,5 +1,5 @@
 [package]
-name = "randomness-beacon"
+name = "sc-randomness-beacon"
 version = "0.1.0"
 authors = ["Damian Straszak <damian.straszak@cardinals.cc,Michal Swietek <michal.swietek@cardinals.cc>"]
 edition = "2018"
@@ -65,6 +65,8 @@ env_logger = "0.7.0"
 tokio = { version = "0.2", features = ["rt-core"] }
 tempfile = "3.1.0"
 sp-api = { version = "2.0.0", path = "../../primitives/api" }
+sc-transaction-pool = { version = "2.0.0", path = "../../client/transaction-pool" }
+substrate-test-runtime-client = { version = "2.0.0", path = "../../test-utils/runtime/client" }
 
 [features]
 default = ["std"]

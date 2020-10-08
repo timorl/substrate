@@ -181,3 +181,174 @@ where
 			.propose(id, inherent_digests, max_duration, record_proof)
 	}
 }
+
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+
+	use parking_lot::Mutex;
+	use sp_consensus::{BlockOrigin, Proposer};
+	use substrate_test_runtime_client::{
+		prelude::*, runtime::{Extrinsic, Transfer},
+	};
+	use sp_transaction_pool::{ChainEvent, MaintainedTransactionPool, TransactionSource};
+	use sc_transaction_pool::BasicPool;
+	use sp_runtime::traits::NumberFor;
+	use sp_runtime::generic::BlockId;
+	use sp_consensus::Environment;
+
+	const SOURCE: TransactionSource = TransactionSource::External;
+
+	fn extrinsic(nonce: u64) -> Extrinsic {
+		Transfer {
+			amount: Default::default(),
+			nonce,
+			from: AccountKeyring::Alice.into(),
+			to: Default::default(),
+		}.into_signed_tx()
+	}
+
+	fn chain_event<B: BlockT>(header: B::Header) -> ChainEvent<B>
+		where NumberFor<B>: From<u64>
+	{
+		ChainEvent::NewBestBlock {
+			hash: header.hash(),
+			tree_route: None,
+		}
+	}
+
+	#[test]
+	fn correctly_proposes_first_block_in_absence_of_random_bytes() {
+		assert!(START_BEACON_HEIGHT >= 2);
+		let client = Arc::new(substrate_test_runtime_client::new());
+		let spawner = sp_core::testing::TaskExecutor::new();
+		let txpool = BasicPool::new_full(
+			Default::default(),
+			None,
+			spawner,
+			client.clone(),
+		);
+
+		futures::executor::block_on(
+			txpool.submit_at(&BlockId::number(0), SOURCE, vec![extrinsic(0), extrinsic(1)])
+		).unwrap();
+
+		futures::executor::block_on(
+			txpool.maintain(chain_event(
+				client.header(&BlockId::Number(0u64))
+					.expect("header get error")
+					.expect("there should be header")
+			))
+		);
+
+		let (_tx, rx) = std::sync::mpsc::channel();
+		let wrapped_rx = Arc::new(Mutex::new(rx));
+		let mut proposer_factory = ProposerFactory::new(client.clone(), txpool.clone(), None, wrapped_rx);
+
+		let proposer_future =proposer_factory.init(&client.header(&BlockId::number(0)).unwrap().unwrap());
+		let proposer = futures::executor::block_on(proposer_future).unwrap();
+		let deadline = time::Duration::from_secs(1);
+		let proposal = futures::executor::block_on(
+			proposer.propose(Default::default(), Default::default(), deadline, RecordProof::No)
+		);
+		assert!(proposal.is_ok());
+	}
+
+	#[test]
+	fn fails_to_propose_second_block_when_random_bytes_not_there() {
+		assert_eq!(START_BEACON_HEIGHT, 2);
+		let mut client = Arc::new(substrate_test_runtime_client::new());
+		let spawner = sp_core::testing::TaskExecutor::new();
+		let txpool = BasicPool::new_full(
+			Default::default(),
+			None,
+			spawner,
+			client.clone(),
+		);
+
+		futures::executor::block_on(
+			txpool.submit_at(&BlockId::number(0), SOURCE, vec![extrinsic(0), extrinsic(1)])
+		).unwrap();
+
+		futures::executor::block_on(
+			txpool.maintain(chain_event(
+				client.header(&BlockId::Number(0u64))
+					.expect("header get error")
+					.expect("there should be header")
+			))
+		);
+
+		let (_tx, rx) = std::sync::mpsc::channel();
+		let wrapped_rx = Arc::new(Mutex::new(rx));
+		let mut proposer_factory = ProposerFactory::new(client.clone(), txpool.clone(), None, wrapped_rx);
+
+		let proposer_future =proposer_factory.init(&client.header(&BlockId::number(0)).unwrap().unwrap());
+		let proposer = futures::executor::block_on(proposer_future).unwrap();
+		let deadline = time::Duration::from_secs(1);
+		let proposal = futures::executor::block_on(
+			proposer.propose(Default::default(), Default::default(), deadline, RecordProof::No)
+		);
+		assert!(proposal.is_ok());
+		let block = proposal.unwrap().block;
+		client.import(BlockOrigin::Own, block).unwrap();
+
+		let proposer_future =proposer_factory.init(&client.header(&BlockId::number(1)).unwrap().unwrap());
+		let proposer = futures::executor::block_on(proposer_future).unwrap();
+		let deadline = time::Duration::from_secs(1);
+		let proposal = futures::executor::block_on(
+			proposer.propose(Default::default(), Default::default(), deadline, RecordProof::No)
+		);
+		assert!(proposal.is_err());
+	}
+
+	#[test]
+	fn fails_to_proposes_second_block_given_randomness_for_different_nonce() {
+		assert_eq!(START_BEACON_HEIGHT, 2);
+		let mut client = Arc::new(substrate_test_runtime_client::new());
+		let spawner = sp_core::testing::TaskExecutor::new();
+		let txpool = BasicPool::new_full(
+			Default::default(),
+			None,
+			spawner,
+			client.clone(),
+		);
+
+		futures::executor::block_on(
+			txpool.submit_at(&BlockId::number(0), SOURCE, vec![extrinsic(0), extrinsic(1)])
+		).unwrap();
+
+		futures::executor::block_on(
+			txpool.maintain(chain_event(
+				client.header(&BlockId::Number(0u64))
+					.expect("header get error")
+					.expect("there should be header")
+			))
+		);
+
+		let (tx, rx) = std::sync::mpsc::channel();
+		let wrapped_rx = Arc::new(Mutex::new(rx));
+		let mut proposer_factory = ProposerFactory::new(client.clone(), txpool.clone(), None, wrapped_rx);
+
+		let proposer_future =proposer_factory.init(&client.header(&BlockId::number(0)).unwrap().unwrap());
+		let proposer = futures::executor::block_on(proposer_future).unwrap();
+		let deadline = time::Duration::from_secs(1);
+		let proposal = futures::executor::block_on(
+			proposer.propose(Default::default(), Default::default(), deadline, RecordProof::No)
+		);
+		assert!(proposal.is_ok());
+		let block = proposal.unwrap().block;
+		client.import(BlockOrigin::Own, block).unwrap();
+
+		//we send randomness for some default nonce -- certainly not the required one
+		assert!(tx.send(Default::default()).is_ok());
+
+		let proposer_future =proposer_factory.init(&client.header(&BlockId::number(1)).unwrap().unwrap());
+		let proposer = futures::executor::block_on(proposer_future).unwrap();
+		let deadline = time::Duration::from_secs(1);
+		let proposal = futures::executor::block_on(
+			proposer.propose(Default::default(), Default::default(), deadline, RecordProof::No)
+		);
+		assert!(proposal.is_err());
+	}
+}

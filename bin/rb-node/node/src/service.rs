@@ -16,7 +16,7 @@ use sp_core::crypto::key_types::DUMMY;
 use sp_inherents::InherentDataProviders;
 use std::sync::Arc;
 
-use randomness_beacon::{import::RandomnessBeaconBlockImport, NetworkBridge};
+use sc_randomness_beacon::{import::RandomnessBeaconBlockImport, NetworkBridge};
 use sp_randomness_beacon::Nonce;
 
 // Our native executor instance.
@@ -198,7 +198,7 @@ pub fn new_full(config: Configuration) -> Result<TaskManager, ServiceError> {
 		// as it does not, then we pack it in Arc<Mutex<_>>
 		let randomness_rx = Arc::new(Mutex::new(randomness_rx));
 
-		let proposer = randomness_beacon::authorship::ProposerFactory::new(
+		let proposer = sc_randomness_beacon::authorship::ProposerFactory::new(
 			client.clone(),
 			transaction_pool,
 			prometheus_registry.as_ref(),
