@@ -329,7 +329,7 @@ impl<B: BlockT> Future for NetworkBridge<B> {
 						shares.push(share);
 						let mut randomness = None;
 						// TODO: the following needs an overhaul
-						if shares.len() == threshold {
+						if shares.len() >= threshold {
 							randomness = keybox.combine_shares(shares);
 						}
 

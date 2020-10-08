@@ -46,6 +46,7 @@ pub fn new_partial(
 				GrandpaBlockImport<FullBackend, Block, FullClient, FullSelectChain>,
 				FullClient,
 			>,
+			sc_finality_grandpa::LinkHalf<Block, FullClient, FullSelectChain>,
 		),
 	>,
 	ServiceError,
@@ -65,7 +66,7 @@ pub fn new_partial(
 		client.clone(),
 	);
 
-	let (grandpa_block_import, _) = sc_finality_grandpa::block_import(
+	let (grandpa_block_import, grandpa_link) = sc_finality_grandpa::block_import(
 		client.clone(),
 		&(client.clone() as Arc<_>),
 		select_chain.clone(),
@@ -105,7 +106,7 @@ pub fn new_partial(
 		select_chain,
 		transaction_pool,
 		inherent_data_providers,
-		other: (rx, rb_gossip_block_import),
+		other: (rx, rb_gossip_block_import, grandpa_link),
 	})
 }
 
@@ -120,7 +121,7 @@ pub fn new_full(config: Configuration) -> Result<TaskManager, ServiceError> {
 		keystore,
 		transaction_pool,
 		inherent_data_providers,
-		other: (randomness_nonce_rx, block_import),
+		other: (randomness_nonce_rx, block_import, grandpa_link),
 		..
 	} = new_partial(&config)?;
 
@@ -156,6 +157,7 @@ pub fn new_full(config: Configuration) -> Result<TaskManager, ServiceError> {
 	let name = config.network.node_name.clone();
 	let prometheus_registry = config.prometheus_registry().cloned();
 	let telemetry_connection_sinks = sc_service::TelemetryConnectionSinks::default();
+	let enable_grandpa = !config.disable_grandpa;
 
 	let rpc_extensions_builder = {
 		let client = client.clone();
@@ -230,17 +232,63 @@ pub fn new_full(config: Configuration) -> Result<TaskManager, ServiceError> {
 	let n_members = 2;
 	let threshold = 2;
 	let nb = NetworkBridge::new(
-		name,
+		name.clone(),
 		n_members,
 		threshold,
 		randomness_nonce_rx,
-		network,
+		network.clone(),
 		randomness_tx,
 	);
 
 	task_manager.spawn_handle().spawn("network bridge", nb);
 
 	network_starter.start_network();
+
+	let keystore = if role.is_authority() {
+		Some(keystore as sp_core::traits::BareCryptoStorePtr)
+	} else {
+		None
+	};
+
+	use std::time::Duration;
+	let grandpa_config = sc_finality_grandpa::Config {
+		// FIXME #1578 make this available through chainspec
+		gossip_duration: Duration::from_millis(333),
+		justification_period: 512,
+		name: Some(name),
+		observer_enabled: false,
+		keystore,
+		is_authority: role.is_network_authority(),
+	};
+
+	if enable_grandpa {
+		// start the full GRANDPA voter
+		// NOTE: non-authorities could run the GRANDPA observer protocol, but at
+		// this point the full voter should provide better guarantees of block
+		// and vote data availability than the observer. The observer has not
+		// been tested extensively yet and having most nodes in a network run it
+		// could lead to finality stalls.
+		use sc_finality_grandpa::SharedVoterState;
+		let grandpa_config = sc_finality_grandpa::GrandpaParams {
+			config: grandpa_config,
+			link: grandpa_link,
+			network,
+			inherent_data_providers,
+			telemetry_on_connect: Some(telemetry_connection_sinks.on_connect_stream()),
+			voting_rule: sc_finality_grandpa::VotingRulesBuilder::default().build(),
+			prometheus_registry,
+			shared_voter_state: SharedVoterState::empty(),
+		};
+
+		// the GRANDPA voter task is considered infallible, i.e.
+		// if it fails we take down the service with it.
+		task_manager.spawn_essential_handle().spawn_blocking(
+			"grandpa-voter",
+			sc_finality_grandpa::run_grandpa_voter(grandpa_config)?,
+		);
+	} else {
+		sc_finality_grandpa::setup_disabled_grandpa(client, &inherent_data_providers, network)?;
+	}
 	Ok(task_manager)
 }
 
