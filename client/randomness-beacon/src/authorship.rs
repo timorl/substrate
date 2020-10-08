@@ -4,7 +4,7 @@ use parking_lot::Mutex;
 use sc_client_api::backend;
 use sp_api::{ApiExt, ProvideRuntimeApi};
 use sp_blockchain::HeaderBackend;
-use sp_randomness_beacon::{inherents::INHERENT_IDENTIFIER, Randomness};
+use sp_randomness_beacon::{inherents::INHERENT_IDENTIFIER, Randomness, START_BEACON_HEIGHT};
 use sp_transaction_pool::TransactionPool;
 use std::{collections::HashMap, sync::mpsc::Receiver, sync::Arc, time};
 
@@ -65,7 +65,7 @@ where
 		let parent_number = *parent_header.number();
 		let mut proposer_nonce = None;
 		// TODO should use global constant
-		if parent_number >= 1.into() {
+		if parent_number + 1.into() >= START_BEACON_HEIGHT.into() {
 			let parent_hash = parent_header.hash();
 			let nonce = <Block as BlockT>::Hash::encode(&parent_hash);
 			proposer_nonce = Some(nonce);

@@ -25,12 +25,11 @@ use frame_system::ensure_none;
 use sp_inherents::{InherentData, InherentIdentifier, ProvideInherent};
 use sp_randomness_beacon::{
 	inherents::{InherentError, INHERENT_IDENTIFIER},
-	Randomness, VerifyKey,
+	Randomness, VerifyKey, START_BEACON_HEIGHT,
 };
 use sp_runtime::print;
 use sp_std::{result, vec::Vec};
 
-const START_BEACON_HEIGHT: u32 = 2;
 
 pub trait Trait: frame_system::Trait {}
 

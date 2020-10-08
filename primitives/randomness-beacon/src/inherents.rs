@@ -18,7 +18,7 @@ pub enum InherentError {
 }
 
 impl InherentError {
-	/// Try to create an instance ouf of the given identifier and data.
+	/// Try to create an instance out of the given identifier and data.
 	#[cfg(feature = "std")]
 	pub fn try_from(id: &InherentIdentifier, data: &[u8]) -> Option<Self> {
 		if id == &INHERENT_IDENTIFIER {

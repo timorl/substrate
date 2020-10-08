@@ -15,6 +15,8 @@ sp_application_crypto::with_pair! {
 	pub type ShareProvider = app::Pair;
 }
 
+pub const START_BEACON_HEIGHT: u32 = 2;
+
 pub const MASTER_SEED: &[u8; 32] = b"12345678901234567890123456789012";
 const MASTER_MATERIAL: [u8; 32] = [
 	47, 140, 97, 41, 216, 22, 207, 81, 195, 116, 188, 127, 8, 195, 230, 62, 209, 86, 207, 120, 174,
