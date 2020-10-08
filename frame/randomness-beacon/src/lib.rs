@@ -29,17 +29,17 @@ use sp_randomness_beacon::{
 };
 use sp_runtime::print;
 use sp_std::{result, vec::Vec};
+use sp_std::convert::TryInto;
+
 
 
 pub trait Trait: frame_system::Trait {}
 
 decl_storage! {
 	trait Store for Module<T: Trait> as RandomnessBeacon {
-		// It seems that having this map is not necessary as we only need
-		// to store random_bytes for the most recent block
-		// will change it once everything else works properly
-		SeedByHeight: map hasher(blake2_128_concat) T::BlockNumber => Vec<u8>;
-		/// Was random_bytes was set in this block?
+		/// Random Bytes for the current block
+		Seed: Vec<u8>;
+		/// Was Seed set in this block?
 		DidUpdate: bool;
 		/// Stores verifier needed to check randomness in blocks
 		RandomnessVerifier get(fn verifier): VerifyKey;
@@ -57,7 +57,7 @@ decl_module! {
 		type Error = Error<T>;
 
 		fn on_initialize(now: T::BlockNumber) -> Weight {
-			if now == 1.into() && !<Self as Store>::RandomnessVerifier::exists() {
+			if !<Self as Store>::RandomnessVerifier::exists() {
 				 <Self as Store>::RandomnessVerifier::set(sp_randomness_beacon::generate_verify_key());
 			}
 
@@ -65,12 +65,12 @@ decl_module! {
 		}
 
 		#[weight = 0]
-		fn set_random_bytes(origin, height: T::BlockNumber, random_bytes: Vec<u8>)  {
+		fn set_random_bytes(origin, random_bytes: Vec<u8>)  {
 			ensure_none(origin)?;
 
 			assert!(!<Self as Store>::DidUpdate::exists(), "Randomness must be set only once in the block");
 
-			<Self as Store>::SeedByHeight::insert(height, random_bytes);
+			<Self as Store>::Seed::set(random_bytes);
 			<Self as Store>::DidUpdate::put(true);
 		}
 
@@ -82,35 +82,22 @@ decl_module! {
 	}
 }
 
-impl<T: Trait> Module<T> {
-	pub fn set_randomness_verifier(verifier: VerifyKey) {
-		<Self as Store>::RandomnessVerifier::put(verifier)
-	}
+fn extract_random_bytes(inherent_data: &InherentData) -> Vec<u8> {
+	let randomness: Result<Option<Randomness>, _> = inherent_data.get_data(&INHERENT_IDENTIFIER);
+	assert!(
+		randomness.is_ok(),
+		"Panic because of error in retrieving inherent_data with err {:?}.",
+		randomness.err().unwrap()
+	);
+	let randomness = randomness.unwrap();
+	assert!(
+		randomness.is_some(),
+		"Panic because no random_bytes found in inherent_data."
+	);
+	Randomness::encode(&randomness.unwrap())
 }
 
-pub trait RandomSeedInherentData {
-	/// Get random random_bytes
-	fn get_random_bytes(&self) -> Vec<u8>;
-}
 
-impl RandomSeedInherentData for InherentData {
-	fn get_random_bytes(&self) -> Vec<u8> {
-		let randomness: Result<Option<Randomness>, _> = self.get_data(&INHERENT_IDENTIFIER);
-		assert!(
-			randomness.is_ok(),
-			"Panic because of error in retrieving inherent_data with err {:?}.",
-			randomness.err().unwrap()
-		);
-		let randomness = randomness.unwrap();
-		assert!(
-			randomness.is_some(),
-			"Panic because no random_bytes found in inherent_data."
-		);
-		Randomness::encode(&randomness.unwrap())
-	}
-}
-
-use sp_std::convert::TryInto;
 
 impl<T: Trait> ProvideInherent for Module<T> {
 	type Call = Call<T>;
@@ -124,7 +111,7 @@ impl<T: Trait> ProvideInherent for Module<T> {
 			now.try_into().unwrap_or_default(),
 		));
 		if now >= T::BlockNumber::from(START_BEACON_HEIGHT) {
-			return Some(Self::Call::set_random_bytes(now, data.get_random_bytes()));
+			return Some(Self::Call::set_random_bytes(extract_random_bytes(data)));
 		}
 		None
 	}
@@ -138,22 +125,15 @@ impl<T: Trait> ProvideInherent for Module<T> {
 		if now < T::BlockNumber::from(START_BEACON_HEIGHT) {
 			return Ok(());
 		}
-
 		if !<Self as Store>::RandomnessVerifier::exists() {
 			return Err(sp_randomness_beacon::inherents::InherentError::VerifyKeyNotSet);
 		}
-
-		let (height, random_bytes) = match call {
-			Call::set_random_bytes(ref height, ref random_bytes) => {
-				(height.clone(), random_bytes.clone())
+		let random_bytes = match call {
+			Call::set_random_bytes(ref random_bytes) => {
+				random_bytes.clone()
 			}
 			_ => return Ok(()),
 		};
-
-		if height != now {
-			return Err(sp_randomness_beacon::inherents::InherentError::WrongHeight);
-		}
-
 		let verify_key = Self::verifier();
 		let randomness = Randomness::decode(&mut &*random_bytes).unwrap();
 		if !sp_randomness_beacon::verify_randomness(&verify_key, randomness) {
@@ -169,3 +149,101 @@ impl<T: Trait> RandomnessT<T::Hash> for Module<T> {
 		T::Hash::default()
 	}
 }
+
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+	use frame_support::traits::{OnInitialize, OnFinalize};
+	use frame_support::{impl_outer_origin, assert_ok, parameter_types, weights::Weight};
+	use sp_io::TestExternalities;
+	use sp_core::H256;
+	use sp_runtime::{Perbill, traits::{BlakeTwo256, IdentityLookup}, testing::Header};
+
+	pub fn new_test_ext() -> TestExternalities {
+		let t = frame_system::GenesisConfig::default().build_storage::<Test>().unwrap();
+		TestExternalities::new(t)
+	}
+
+	impl_outer_origin! {
+		pub enum Origin for Test where system = frame_system {}
+	}
+
+	#[derive(Clone, Eq, PartialEq)]
+	pub struct Test;
+	parameter_types! {
+		pub const BlockHashCount: u64 = 250;
+		pub const MaximumBlockWeight: Weight = 1024;
+		pub const MaximumBlockLength: u32 = 2 * 1024;
+		pub const AvailableBlockRatio: Perbill = Perbill::one();
+	}
+	impl frame_system::Trait for Test {
+		type BaseCallFilter = ();
+		type Origin = Origin;
+		type Index = u64;
+		type BlockNumber = u64;
+		type Call = ();
+		type Hash = H256;
+		type Hashing = BlakeTwo256;
+		type AccountId = u64;
+		type Lookup = IdentityLookup<Self::AccountId>;
+		type Header = Header;
+		type Event = ();
+		type BlockHashCount = BlockHashCount;
+		type MaximumBlockWeight = MaximumBlockWeight;
+		type DbWeight = ();
+		type BlockExecutionWeight = ();
+		type ExtrinsicBaseWeight = ();
+		type MaximumExtrinsicWeight = MaximumBlockWeight;
+		type AvailableBlockRatio = AvailableBlockRatio;
+		type MaximumBlockLength = MaximumBlockLength;
+		type Version = ();
+		type PalletInfo = ();
+		type AccountData = ();
+		type OnNewAccount = ();
+		type OnKilledAccount = ();
+		type SystemWeightInfo = ();
+	}
+	parameter_types! {
+		pub const MinimumPeriod: u64 = 5;
+	}
+	impl Trait for Test {}
+	type RBeacon = Module<Test>;
+
+
+	#[test]
+	fn randomness_beacon_works() {
+		new_test_ext().execute_with(|| {
+			assert_eq!(RBeacon::on_initialize(0), 0);
+			assert_ok!(RBeacon::set_random_bytes(Origin::none(), vec![0,1,2,3,4,5,6,7]));
+		});
+	}
+
+	#[test]
+	#[should_panic(expected = "Randomness must be set only once in the block")]
+	fn double_randomness_should_fail() {
+		new_test_ext().execute_with(|| {
+			assert_eq!(RBeacon::on_initialize(0), 0);
+			assert_ok!(RBeacon::set_random_bytes(Origin::none(), vec![0,1,2,3,4,5,6,7]));
+			let _ = RBeacon::set_random_bytes(Origin::none(), vec![0,1,2,3,4,5,6,0]);
+		});
+	}
+
+	#[test]
+	fn verifier_correctly_initialized() {
+		new_test_ext().execute_with(|| {
+			assert_eq!(RBeacon::on_initialize(0), 0);
+			assert!(<RBeacon as Store>::RandomnessVerifier::exists());
+		});
+	}
+
+	#[test]
+	#[should_panic(expected = "Randomness must be put into the block")]
+	fn no_randomness_should_fail() {
+		new_test_ext().execute_with(|| {
+			assert_eq!(RBeacon::on_initialize(5), 0);
+			let _ = RBeacon::on_finalize(5);
+		});
+	}
+}
+

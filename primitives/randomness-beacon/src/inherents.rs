@@ -2,7 +2,6 @@ use codec::Encode;
 #[cfg(feature = "std")]
 use codec::Decode;
 use sp_inherents::{InherentIdentifier, IsFatalError};
-
 use super::{Nonce, Randomness};
 pub const INHERENT_IDENTIFIER: InherentIdentifier = *b"randbecn";
 pub type InherentType = (Nonce, Randomness);
@@ -37,3 +36,4 @@ impl IsFatalError for InherentError {
 		}
 	}
 }
+
