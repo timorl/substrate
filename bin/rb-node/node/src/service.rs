@@ -73,13 +73,8 @@ pub fn new_partial(
 	)?;
 
 	let (tx, rx) = channel(10);
-	let rb_gossip_block_import = RandomnessBeaconBlockImport::new(
-		grandpa_block_import.clone(),
-		client.clone(),
-		tx,
-		1,
-		inherent_data_providers.clone(),
-	);
+	let rb_gossip_block_import =
+		RandomnessBeaconBlockImport::new(grandpa_block_import.clone(), client.clone(), tx);
 	let aura_block_import = sc_consensus_aura::AuraBlockImport::<_, _, _, AuraPair>::new(
 		rb_gossip_block_import.clone(),
 		client.clone(),

@@ -28,10 +28,8 @@ use sp_randomness_beacon::{
 	Randomness, VerifyKey, START_BEACON_HEIGHT,
 };
 use sp_runtime::print;
-use sp_std::{result, vec::Vec};
 use sp_std::convert::TryInto;
-
-
+use sp_std::{result, vec::Vec};
 
 pub trait Trait: frame_system::Trait {}
 
@@ -97,8 +95,6 @@ fn extract_random_bytes(inherent_data: &InherentData) -> Vec<u8> {
 	Randomness::encode(&randomness.unwrap())
 }
 
-
-
 impl<T: Trait> ProvideInherent for Module<T> {
 	type Call = Call<T>;
 	type Error = InherentError;
@@ -129,9 +125,7 @@ impl<T: Trait> ProvideInherent for Module<T> {
 			return Err(sp_randomness_beacon::inherents::InherentError::VerifyKeyNotSet);
 		}
 		let random_bytes = match call {
-			Call::set_random_bytes(ref random_bytes) => {
-				random_bytes.clone()
-			}
+			Call::set_random_bytes(ref random_bytes) => random_bytes.clone(),
 			_ => return Ok(()),
 		};
 		let verify_key = Self::verifier();
@@ -150,18 +144,23 @@ impl<T: Trait> RandomnessT<T::Hash> for Module<T> {
 	}
 }
 
-
 #[cfg(test)]
 mod tests {
 	use super::*;
-	use frame_support::traits::{OnInitialize, OnFinalize};
-	use frame_support::{impl_outer_origin, assert_ok, parameter_types, weights::Weight};
-	use sp_io::TestExternalities;
+	use frame_support::traits::{OnFinalize, OnInitialize};
+	use frame_support::{assert_ok, impl_outer_origin, parameter_types, weights::Weight};
 	use sp_core::H256;
-	use sp_runtime::{Perbill, traits::{BlakeTwo256, IdentityLookup}, testing::Header};
+	use sp_io::TestExternalities;
+	use sp_runtime::{
+		testing::Header,
+		traits::{BlakeTwo256, IdentityLookup},
+		Perbill,
+	};
 
 	pub fn new_test_ext() -> TestExternalities {
-		let t = frame_system::GenesisConfig::default().build_storage::<Test>().unwrap();
+		let t = frame_system::GenesisConfig::default()
+			.build_storage::<Test>()
+			.unwrap();
 		TestExternalities::new(t)
 	}
 
@@ -210,12 +209,14 @@ mod tests {
 	impl Trait for Test {}
 	type RBeacon = Module<Test>;
 
-
 	#[test]
 	fn randomness_beacon_works() {
 		new_test_ext().execute_with(|| {
 			assert_eq!(RBeacon::on_initialize(0), 0);
-			assert_ok!(RBeacon::set_random_bytes(Origin::none(), vec![0,1,2,3,4,5,6,7]));
+			assert_ok!(RBeacon::set_random_bytes(
+				Origin::none(),
+				vec![0, 1, 2, 3, 4, 5, 6, 7]
+			));
 		});
 	}
 
@@ -224,8 +225,11 @@ mod tests {
 	fn double_randomness_should_fail() {
 		new_test_ext().execute_with(|| {
 			assert_eq!(RBeacon::on_initialize(0), 0);
-			assert_ok!(RBeacon::set_random_bytes(Origin::none(), vec![0,1,2,3,4,5,6,7]));
-			let _ = RBeacon::set_random_bytes(Origin::none(), vec![0,1,2,3,4,5,6,0]);
+			assert_ok!(RBeacon::set_random_bytes(
+				Origin::none(),
+				vec![0, 1, 2, 3, 4, 5, 6, 7]
+			));
+			let _ = RBeacon::set_random_bytes(Origin::none(), vec![0, 1, 2, 3, 4, 5, 6, 0]);
 		});
 	}
 
@@ -246,4 +250,3 @@ mod tests {
 		});
 	}
 }
-
