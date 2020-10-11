@@ -1,13 +1,13 @@
 [package]
 name = "rb-node"
-version = "2.0.0"
-authors = ["Anonymous"]
-description = "A new FRAME-based Substrate node, ready for hacking."
+version = "0.1.0"
+authors = ["Damian Straszak <damian.straszak@cardinals.cc, Michal Swietek <michal.swietek@cardinals.cc>"]
+description = "A new FRAME-based Substrate node for testing the randomness beacon pallet."
 edition = "2018"
-license = "Unlicense"
+license = "Apache 2.0"
 build = "build.rs"
 homepage = "https://substrate.dev"
-repository = "https://github.com/paritytech/substrate/"
+repository = "https://github.com/Cardinal-Cryptography/substrate/"
 
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]
@@ -37,7 +37,7 @@ sp-consensus = { version = "0.8.0", path = "../../../primitives/consensus/common
 sc-consensus = { version = "0.8.0", path = "../../../client/consensus/common" }
 sc-finality-grandpa = { version = "0.8.0", path = "../../../client/finality-grandpa" }
 sp-finality-grandpa = { version = "2.0.0", path = "../../../primitives/finality-grandpa" }
-sp-randomness-beacon= { version = "2.0.0", path = "../../../primitives/randomness-beacon" }
+sp-randomness-beacon= { version = "0.1.0", path = "../../../primitives/randomness-beacon" }
 sc-client-api = { version = "2.0.0", path = "../../../client/api" }
 sp-runtime = { version = "2.0.0", path = "../../../primitives/runtime" }
 
@@ -52,7 +52,7 @@ sc-basic-authorship = { version = "0.8.0", path = "../../../client/basic-authors
 substrate-frame-rpc-system = { version = "2.0.0", path = "../../../utils/frame/rpc/system" }
 pallet-transaction-payment-rpc = { version = "2.0.0", path = "../../../frame/transaction-payment/rpc/" }
 
-rb-node-runtime = { version = "2.0.0", path = "../runtime" }
+rb-node-runtime = { version = "0.1.0", path = "../runtime" }
 
 [build-dependencies]
 substrate-build-script-utils = { version = "2.0.0", path = "../../../utils/build-script-utils" }

@@ -1,11 +1,12 @@
 [package]
 name = "rb-node-runtime"
-version = "2.0.0"
-authors = ["Anonymous"]
+version = "0.1.0"
+authors = ["Damian Straszak <damian.straszak@cardinals.cc, Michal Swietek <michal.swietek@cardinals.cc>"]
+description = "A runtime for testing randomness beacon pallet."
 edition = "2018"
-license = "Unlicense"
+license = "Apache 2.0"
 homepage = "https://substrate.dev"
-repository = "https://github.com/paritytech/substrate/"
+repository = "https://github.com/Cardinal-Cryptography/substrate/"
 
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]
@@ -30,14 +31,14 @@ sp-consensus-aura = { version = "0.8.0", default-features = false, path = "../..
 sp-core = { version = "2.0.0", default-features = false, path = "../../../primitives/core" }
 sp-inherents = { path = "../../../primitives/inherents", default-features = false, version = "2.0.0"}
 sp-offchain = { version = "2.0.0", default-features = false, path = "../../../primitives/offchain" }
-sp-randomness-beacon = { version = "2.0.0", default-features = false, path = "../../../primitives/randomness-beacon" }
+sp-randomness-beacon = { version = "0.1.0", default-features = false, path = "../../../primitives/randomness-beacon" }
 sp-runtime = { version = "2.0.0", default-features = false, path = "../../../primitives/runtime" }
 sp-session = { version = "2.0.0", default-features = false, path = "../../../primitives/session" }
 sp-std = { version = "2.0.0", default-features = false, path = "../../../primitives/std" }
 sp-transaction-pool = { version = "2.0.0", default-features = false, path = "../../../primitives/transaction-pool" }
 sp-version = { version = "2.0.0", default-features = false, path = "../../../primitives/version" }
 
-pallet-randomness-beacon= { version = "2.0.0", default-features = false, path = "../../../frame/randomness-beacon" }
+pallet-randomness-beacon= { version = "0.1.0", default-features = false, path = "../../../frame/randomness-beacon" }
 
 # Used for the node's RPCs
 frame-system-rpc-runtime-api = { version = "2.0.0", default-features = false, path = "../../../frame/system/rpc/runtime-api/" }

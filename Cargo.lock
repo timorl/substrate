@@ -4786,7 +4786,7 @@ dependencies = [
 
 [[package]]
 name = "pallet-randomness-beacon"
-version = "2.0.0"
+version = "0.1.0"
 dependencies = [
  "frame-support",
  "frame-system",
@@ -6005,7 +6005,7 @@ dependencies = [
 
 [[package]]
 name = "rb-node"
-version = "2.0.0"
+version = "0.1.0"
 dependencies = [
  "async-std",
  "futures 0.3.5",
@@ -6045,7 +6045,7 @@ dependencies = [
 
 [[package]]
 name = "rb-node-runtime"
-version = "2.0.0"
+version = "0.1.0"
 dependencies = [
  "frame-executive",
  "frame-support",
@@ -8400,7 +8400,7 @@ dependencies = [
 
 [[package]]
 name = "sp-randomness-beacon"
-version = "2.0.0"
+version = "0.1.0"
 dependencies = [
  "log",
  "parity-scale-codec",
