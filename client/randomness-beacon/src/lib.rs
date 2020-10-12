@@ -12,7 +12,7 @@ use sp_runtime::traits::Block as BlockT;
 use sp_randomness_beacon::{KeyBox, Nonce, Randomness, RandomnessVerifier, Share, ShareProvider};
 
 use futures::{channel::mpsc::Receiver, prelude::*};
-use parking_lot::{Mutex, RwLock};
+use parking_lot::Mutex;
 use std::{
 	collections::HashMap,
 	pin::Pin,
@@ -78,19 +78,11 @@ fn nonce_to_topic<B: BlockT>(nonce: Nonce) -> B::Hash {
 	B::Hash::decode(&mut &*nonce).unwrap()
 }
 
-pub struct GossipValidator {
-	round: RwLock<u8>,
-}
+pub struct GossipValidator {}
 
 impl GossipValidator {
 	pub fn new() -> Self {
-		GossipValidator {
-			round: RwLock::new(0),
-		}
-	}
-
-	pub fn note_round(&self, round: u8) {
-		*self.round.write() = round;
+		GossipValidator {}
 	}
 }
 
