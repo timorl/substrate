@@ -7210,6 +7210,7 @@ name = "sc-randomness-beacon"
 version = "0.1.0"
 dependencies = [
  "assert_matches",
+ "async-std",
  "derive_more",
  "env_logger",
  "fork-tree",

@@ -1,8 +1,8 @@
 use codec::{Decode, Encode};
 use log::info;
 
-use sc_network::{NetworkService, PeerId};
-use sc_network_gossip::{
+use sc_network::PeerId;
+use sc_network_gossip::{Network,
 	GossipEngine, TopicNotification, ValidationResult, Validator, ValidatorContext,
 };
 
@@ -156,12 +156,12 @@ pub struct RandomnessGossip<B: BlockT> {
 impl<B: BlockT> Unpin for RandomnessGossip<B> {}
 
 impl<B: BlockT> RandomnessGossip<B> {
-	pub fn new(
+	pub fn new<N: Network<B> + Send + Clone + 'static>(
 		id: String,
 		n_members: usize,
 		threshold: usize,
 		randomness_nonce_rx: Receiver<Nonce>,
-		network: Arc<NetworkService<B, <B as BlockT>::Hash>>,
+		network: N,
 		randomness_tx: Option<Sender<Randomness>>,
 	) -> Self {
 		let gossip_engine = Arc::new(Mutex::new(GossipEngine::new(
@@ -268,19 +268,17 @@ impl<B: BlockT> Future for RandomnessGossip<B> {
 			}
 			Poll::Pending => {}
 		};
-
 		let new_nonce = match self.randomness_nonce_rx.poll_next_unpin(cx) {
 			Poll::Pending => None,
 			Poll::Ready(None) => return Poll::Ready(()),
 			Poll::Ready(new_nonce) => new_nonce,
 		};
-
-		if !new_nonce.is_none() {
+		if new_nonce.is_some() {
 			let new_nonce = new_nonce.unwrap();
 			let topic = nonce_to_topic::<B>(new_nonce.clone());
 			// received new nonce, start collecting signatures for it
 			if !self.topics.contains_key(&topic) {
-				let (incoming, outgoing, shares) = self.initialize_nonce(new_nonce);
+				let (incoming, outgoing, shares) = self.initialize_nonce(new_nonce.clone());
 				let periodic_sender = futures_timer::Delay::new(SEND_INTERVAL);
 				self.topics
 					.insert(topic, (incoming, outgoing, periodic_sender, shares));
@@ -338,5 +336,95 @@ impl<B: BlockT> Future for RandomnessGossip<B> {
 		}
 
 		Poll::Ready(())
+	}
+}
+
+#[cfg(test)]
+mod tests {
+	use futures::channel::mpsc::channel;
+	use std::{borrow::Cow};
+	use sp_runtime::{ConsensusEngineId};
+	use sc_network::{Event, ReputationChange};
+	use sc_network_gossip::{Network};
+	use futures::{channel::mpsc::{unbounded, UnboundedSender}, executor::block_on, future::poll_fn};
+	use sp_runtime::{testing::H256, traits::{Block as BlockT}};
+	use std::sync::{Arc, Mutex};
+	use substrate_test_runtime_client::runtime::Block;
+	use super::*;
+
+	#[derive(Clone, Default)]
+	struct TestNetwork {
+		inner: Arc<Mutex<TestNetworkInner>>,
+	}
+
+	#[derive(Clone, Default)]
+	struct TestNetworkInner {
+		event_senders: Vec<UnboundedSender<Event>>,
+	}
+
+	impl<B: BlockT> Network<B> for TestNetwork {
+		fn event_stream(&self) -> Pin<Box<dyn Stream<Item = Event> + Send>> {
+			let (tx, rx) = unbounded();
+			self.inner.lock().unwrap().event_senders.push(tx);
+
+			Box::pin(rx)
+		}
+
+		fn report_peer(&self, _: PeerId, _: ReputationChange) {
+		}
+
+		fn disconnect_peer(&self, _: PeerId) {
+			unimplemented!();
+		}
+
+		fn write_notification(&self, _: PeerId, _: ConsensusEngineId, _: Vec<u8>) {
+			unimplemented!();
+		}
+
+		fn register_notifications_protocol(&self, _: ConsensusEngineId, _: Cow<'static, str>) {}
+
+		fn announce(&self, _: B::Hash, _: Vec<u8>) {
+			unimplemented!();
+		}
+	}
+
+
+	#[test]
+	fn starts_messaging_on_nonce_notification() {
+		let (mut a_notify_nonce_tx, a_notify_nonce_rx) = channel(10);
+		let (tx, _a_randomness_rx) = std::sync::mpsc::channel();
+		let a_randomness_tx = Some(tx);
+
+		let network = TestNetwork::default();
+
+		let n_members = 2;
+		let threshold = 2;
+
+		let mut alice_rg = RandomnessGossip::<Block>::new(
+			String::from("Alice"),
+			n_members,
+			threshold,
+			a_notify_nonce_rx,
+			network.clone(),
+			a_randomness_tx,
+		);
+
+		let nonce = H256::default();
+		let enc_nonce = H256::default().encode();
+		assert!(a_notify_nonce_tx.try_send(enc_nonce.clone()).is_ok());
+
+		block_on(poll_fn(|cx| {
+				for _ in 0..50 {
+					let res = alice_rg.poll_unpin(cx);
+					info!("res: {:?}", res);
+					if let Poll::Ready(()) = res {
+						unreachable!(
+							"As long as network is alive, RandomnessGossip should go on."
+						);
+					}
+				}
+				Poll::Ready(())
+			}));
+		assert!(alice_rg.topics.contains_key(&nonce));
 	}
 }
