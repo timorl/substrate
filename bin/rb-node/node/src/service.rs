@@ -16,7 +16,7 @@ use sp_core::crypto::key_types::DUMMY;
 use sp_inherents::InherentDataProviders;
 use std::sync::Arc;
 
-use sc_randomness_beacon::{import::RandomnessBeaconBlockImport, NetworkBridge};
+use sc_randomness_beacon::{import::RandomnessBeaconBlockImport, RandomnessGossip};
 use sp_randomness_beacon::Nonce;
 
 // Our native executor instance.
@@ -226,7 +226,7 @@ pub fn new_full(config: Configuration) -> Result<TaskManager, ServiceError> {
 	// TODO: should be read from config
 	let n_members = 2;
 	let threshold = 2;
-	let nb = NetworkBridge::new(
+	let rg = RandomnessGossip::new(
 		name.clone(),
 		n_members,
 		threshold,
@@ -235,7 +235,7 @@ pub fn new_full(config: Configuration) -> Result<TaskManager, ServiceError> {
 		randomness_tx,
 	);
 
-	task_manager.spawn_handle().spawn("network bridge", nb);
+	task_manager.spawn_handle().spawn("randomness gossip", rg);
 
 	network_starter.start_network();
 

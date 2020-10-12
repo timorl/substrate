@@ -74,8 +74,7 @@ pub struct GossipMessage {
 	pub message: Message,
 }
 
-fn round_topic<B: BlockT>(nonce: Nonce) -> B::Hash {
-	//B::Hash::decode(&mut nonce.to_vec()).unwrap()
+fn nonce_to_topic<B: BlockT>(nonce: Nonce) -> B::Hash {
 	B::Hash::decode(&mut &*nonce).unwrap()
 }
 
@@ -110,7 +109,7 @@ impl<B: BlockT> Validator<B> for GossipValidator {
 	) -> ValidationResult<B::Hash> {
 		match GossipMessage::decode(&mut data.clone()) {
 			Ok(gm) => {
-				let topic = round_topic::<B>(gm.nonce);
+				let topic = nonce_to_topic::<B>(gm.nonce);
 				ValidationResult::ProcessAndKeep(topic)
 			}
 			Err(e) => {
@@ -138,14 +137,14 @@ impl<B: BlockT> OutgoingMessage<B> {
 			nonce: self.nonce.clone(),
 			message: self.msg.clone(),
 		};
-		let topic = round_topic::<B>(self.nonce.clone());
+		let topic = nonce_to_topic::<B>(self.nonce.clone());
 		self.gossip_engine
 			.lock()
 			.gossip_message(topic, message.encode(), true);
 	}
 }
 
-pub struct NetworkBridge<B: BlockT> {
+pub struct RandomnessGossip<B: BlockT> {
 	threshold: usize,
 	topics: HashMap<
 		B::Hash,
@@ -158,14 +157,13 @@ pub struct NetworkBridge<B: BlockT> {
 	>,
 	keybox: KeyBox,
 	gossip_engine: Arc<Mutex<GossipEngine<B>>>,
-	validator: Arc<GossipValidator>,
 	randomness_nonce_rx: Receiver<Nonce>,
 	randomness_tx: Option<Sender<Randomness>>,
 }
 
-impl<B: BlockT> Unpin for NetworkBridge<B> {}
+impl<B: BlockT> Unpin for RandomnessGossip<B> {}
 
-impl<B: BlockT> NetworkBridge<B> {
+impl<B: BlockT> RandomnessGossip<B> {
 	pub fn new(
 		id: String,
 		n_members: usize,
@@ -174,14 +172,16 @@ impl<B: BlockT> NetworkBridge<B> {
 		network: Arc<NetworkService<B, <B as BlockT>::Hash>>,
 		randomness_tx: Option<Sender<Randomness>>,
 	) -> Self {
-		let validator = Arc::new(GossipValidator::new());
 		let gossip_engine = Arc::new(Mutex::new(GossipEngine::new(
 			network.clone(),
 			RANDOMNESS_BEACON_ID,
 			RB_PROTOCOL_NAME,
-			validator.clone(),
+			Arc::new(GossipValidator::new()),
 		)));
-		//let ids = ["alice", "bob", "charlie", "dave", "eve"];
+
+
+		// Here the keys are hardcoded in the absence of DKG.
+		// This is temporary and will be removed in the 2nd Milestone.
 		let seeds = [
 			b"00000000000000000000000000000000",
 			b"00000000000000000000000000000001",
@@ -195,11 +195,13 @@ impl<B: BlockT> NetworkBridge<B> {
 		for i in 0..n_members {
 			verify_keys.push(ShareProvider::from_seed(seeds[i]).public());
 		}
+
+		// Currently, for testing purposes, it only supports Alice and Bob.
 		let id = if id == "Alice" { 0 } else { 1 };
 		let share_provider = Pair::from_seed(seeds[id]);
 		let master_key = ShareProvider::from_seed(sp_randomness_beacon::MASTER_SEED).public();
-		// TODO: actually construct, milestone 2
 
+		// TODO: actually construct, milestone 2
 		let keybox = KeyBox::new(
 			id as u32,
 			share_provider,
@@ -208,29 +210,21 @@ impl<B: BlockT> NetworkBridge<B> {
 			threshold,
 		);
 
-		NetworkBridge {
+		RandomnessGossip {
 			threshold,
 			topics: HashMap::new(),
 			keybox,
 			gossip_engine,
-			validator,
 			randomness_nonce_rx,
 			randomness_tx,
 		}
 	}
 
-	pub fn note_round(&self, round: u8) {
-		self.validator.note_round(round);
-	}
-
-	fn round_communication(
+	fn initialize_nonce(
 		&self,
 		nonce: Nonce,
 	) -> (Receiver<TopicNotification>, OutgoingMessage<B>, Vec<Share>) {
-		// TODO: how to choose rounds?
-		let round = 0;
-		self.note_round(round);
-		let topic = round_topic::<B>(nonce.clone());
+		let topic = nonce_to_topic::<B>(nonce.clone());
 
 		let incoming = self
 			.gossip_engine
@@ -269,7 +263,7 @@ impl<B: BlockT> NetworkBridge<B> {
 	}
 }
 
-impl<B: BlockT> Future for NetworkBridge<B> {
+impl<B: BlockT> Future for RandomnessGossip<B> {
 	type Output = ();
 
 	fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
@@ -277,7 +271,7 @@ impl<B: BlockT> Future for NetworkBridge<B> {
 			Poll::Ready(()) => {
 				return Poll::Ready(info!(
 					target: RB_PROTOCOL_NAME,
-					"Gossip engine future finished."
+					"RandomnessGossip future finished."
 				))
 			}
 			Poll::Pending => {}
@@ -286,16 +280,15 @@ impl<B: BlockT> Future for NetworkBridge<B> {
 		let new_nonce = match self.randomness_nonce_rx.poll_next_unpin(cx) {
 			Poll::Pending => None,
 			Poll::Ready(None) => return Poll::Ready(()),
-			Poll::Ready(new_nonce) => new_nonce, // probably sth else in final version
+			Poll::Ready(new_nonce) => new_nonce,
 		};
 
 		if !new_nonce.is_none() {
 			let new_nonce = new_nonce.unwrap();
-			let topic = round_topic::<B>(new_nonce.clone());
+			let topic = nonce_to_topic::<B>(new_nonce.clone());
 			// received new nonce, start collecting signatures for it
-			// TODO: some throttling
 			if !self.topics.contains_key(&topic) {
-				let (incoming, outgoing, shares) = self.round_communication(new_nonce);
+				let (incoming, outgoing, shares) = self.initialize_nonce(new_nonce);
 				let periodic_sender = futures_timer::Delay::new(SEND_INTERVAL);
 				self.topics
 					.insert(topic, (incoming, outgoing, periodic_sender, shares));
@@ -307,12 +300,10 @@ impl<B: BlockT> Future for NetworkBridge<B> {
 			return Poll::Pending;
 		}
 
-		// TODO: refactor this awful borrow checker hack
 		let randomness_tx = self.randomness_tx.clone();
 		let keybox = self.keybox.clone();
 		let threshold = self.threshold.clone();
 
-		// TODO: maybe parallelize
 		for (_, (incoming, outgoing, periodic_sender, shares)) in self.topics.iter_mut() {
 			while let Poll::Ready(()) = periodic_sender.poll_unpin(cx) {
 				periodic_sender.reset(SEND_INTERVAL);
@@ -333,11 +324,11 @@ impl<B: BlockT> Future for NetworkBridge<B> {
 							randomness = keybox.combine_shares(shares);
 						}
 
-						// combine shares and on succes put new random for InherentDataProvider
+						// When randomness succesfully combined, notify block proposer
 						if randomness.is_some() {
 							let randomness = randomness.unwrap();
 							if let Some(ref randomness_tx) = randomness_tx {
-								assert!( randomness_tx.send(randomness).is_ok(), "problem with sending newly available random to the block proposer");
+								assert!( randomness_tx.send(randomness).is_ok(), "problem with sending new randomness to the block proposer");
 							}
 						}
 					}
