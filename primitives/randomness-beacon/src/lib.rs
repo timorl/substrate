@@ -6,6 +6,9 @@ use codec::{Decode, Encode};
 use sp_core::crypto::Pair;
 use sp_std::vec::Vec;
 
+use bls12_381::{G2Affine, Scalar};
+use sha3::{Digest, Sha3_256};
+
 pub mod app {
 	use sp_application_crypto::{app_crypto, ed25519, key_types::RANDOMNESS_BEACON};
 	app_crypto!(ed25519, RANDOMNESS_BEACON);
@@ -182,6 +185,25 @@ impl KeyBox {
 	}
 }
 
+// TODO: this hashing function gen ^ hash(nonce) is not secure as the log is known for the result.
+// Change to try-and-increment or a deterministic one at the earliest convinience.
+pub fn hash_to_g2(nonce: Vec<u8>) -> G2Affine {
+	let mut hasher = Sha3_256::new();
+	hasher.input(&nonce);
+	let data = hasher.result();
+
+	let mut scalar_raw = [0u64; 4];
+	for i in 0usize..4 {
+		let mut bytes = [0u8; 8];
+		bytes.copy_from_slice(&data[i * 8..(i + 1) * 8]);
+		scalar_raw[i] = u64::from_le_bytes(bytes);
+	}
+
+	let scalar = Scalar::from_raw(scalar_raw);
+
+	G2Affine::from(G2Affine::generator() * scalar)
+}
+
 #[cfg(test)]
 mod tests {
 	use super::*;
@@ -229,5 +251,13 @@ mod tests {
 		share.nonce = b"1729".to_vec();
 		share.creator = 1;
 		assert!(!keybox.verify_share(&share));
+	}
+
+	#[test]
+	fn hash() {
+		let nonce = MASTER_SEED.to_vec();
+		let point = hash_to_g2(nonce);
+		assert_eq!(point.is_on_curve().unwrap_u8(), 1);
+		assert_eq!(point.is_torsion_free().unwrap_u8(), 1);
 	}
 }
