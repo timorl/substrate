@@ -4545,6 +4545,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "pallet-dkg"
+version = "0.1.0"
+dependencies = [
+ "bls12_381",
+ "frame-support",
+ "frame-system",
+ "impl-trait-for-tuples",
+ "lite-json",
+ "parity-scale-codec",
+ "sp-authorship",
+ "sp-core",
+ "sp-inherents",
+ "sp-io",
+ "sp-randomness-beacon",
+ "sp-runtime",
+ "sp-std",
+]
+
+[[package]]
 name = "pallet-elections"
 version = "2.0.0"
 dependencies = [
