@@ -6,11 +6,11 @@ use sp_std::vec::Vec;
 
 use rand::{thread_rng, Rng};
 
-use bls12_381::{G1Affine, G2Affine, Scalar};
+use bls12_381::{G1Affine, G1Projective, G2Affine, Scalar};
 use pairing::PairingCurveAffine;
 use sha3::{Digest, Sha3_256};
 
-pub const START_BEACON_HEIGHT: u32 = 2;
+pub const START_BEACON_HEIGHT: u64 = 2;
 
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Signature(G1Affine);
@@ -56,6 +56,7 @@ impl VerifyKey {
 	}
 }
 
+#[derive(Clone)]
 pub struct Pair {
 	secret: Scalar,
 	verify: VerifyKey,
@@ -82,7 +83,7 @@ impl Pair {
 		}
 	}
 
-	fn verify(&self, msg: &Vec<u8>, sgn: &Signature) -> bool {
+	pub fn verify(&self, msg: &Vec<u8>, sgn: &Signature) -> bool {
 		self.verify.verify(msg, sgn)
 	}
 
@@ -91,9 +92,44 @@ impl Pair {
 	}
 }
 
+fn poly_eval(coeffs: &Vec<Scalar>, x: &Scalar) -> Scalar {
+	let mut eval = Scalar::zero();
+	for coeff in coeffs.iter() {
+		eval *= x;
+		eval += coeff;
+	}
+
+	eval
+}
+
+pub fn generate_threshold_pairs(n_members: usize, threshold: usize) -> (Vec<Pair>, VerifyKey) {
+	assert!(n_members >= threshold && threshold > 0);
+
+	let mut pairs = Vec::new();
+
+	let mut coeffs = Vec::new();
+	for _ in 0..threshold {
+		coeffs.push(random_scalar());
+	}
+
+	let secret = coeffs.last().unwrap().clone();
+	let master_key = VerifyKey::from_secret(&secret);
+
+	for i in 0..n_members {
+		let x = Scalar::from((i + 1) as u64);
+		let secret = poly_eval(&coeffs, &x);
+		pairs.push(Pair {
+			secret,
+			verify: VerifyKey::from_secret(&secret),
+		});
+	}
+
+	(pairs, master_key)
+}
+
 #[derive(PartialEq, Decode, Encode)]
 pub struct Share {
-	creator: u32,
+	creator: u64,
 	nonce: Nonce,
 	data: Signature,
 }
@@ -124,7 +160,7 @@ pub struct RandomnessVerifier {
 }
 
 impl RandomnessVerifier {
-	fn new(master_key: VerifyKey) -> Self {
+	pub fn new(master_key: VerifyKey) -> Self {
 		RandomnessVerifier { master_key }
 	}
 
@@ -133,11 +169,10 @@ impl RandomnessVerifier {
 	}
 }
 
-/*
 #[cfg(feature = "std")]
 pub struct KeyBox {
-	id: u32,
-	share_provider: ShareProvider,
+	id: u64,
+	share_provider: Pair,
 	verify_keys: Vec<VerifyKey>,
 	master_key: RandomnessVerifier,
 	threshold: usize,
@@ -156,11 +191,31 @@ impl Clone for KeyBox {
 	}
 }
 
+fn lagrange_coef(shares: &Vec<Share>, x: u64) -> Scalar {
+	let mut num = Scalar::one();
+	let mut den = Scalar::one();
+
+	for share in shares.iter() {
+		if share.creator == x {
+			continue;
+		}
+		let p = share.creator;
+		num *= Scalar::from(p + 1).neg();
+		if x > p {
+			den *= Scalar::from(x - p);
+		} else {
+			den *= Scalar::from(p - x).neg();
+		}
+	}
+
+	num * den.invert().unwrap()
+}
+
 #[cfg(feature = "std")]
 impl KeyBox {
 	pub fn new(
-		id: u32,
-		share_provider: ShareProvider,
+		id: u64,
+		share_provider: Pair,
 		verify_keys: Vec<VerifyKey>,
 		master_key: RandomnessVerifier,
 		threshold: usize,
@@ -183,43 +238,26 @@ impl KeyBox {
 	}
 
 	pub fn verify_share(&self, share: &Share) -> bool {
-		ShareProvider::verify(
-			&share.data,
-			share.nonce.clone(),
-			&self.verify_keys[share.creator as usize],
-		)
+		self.verify_keys[share.creator as usize].verify(&share.nonce, &share.data)
 	}
 
 	// Some(share) if succeeded and None if failed for some reason (e.g. not enough shares) -- should add error handling later
-	pub fn combine_shares(&self, shares: &Vec<Share>) -> Option<Randomness> {
-		if shares.len() == 0 {
-			return None;
+	// Assumption: shares are for the same nonce, are valid, and there are exactly threshold of them
+	pub fn combine_shares(&self, shares: &Vec<Share>) -> Randomness {
+		let mut sum = G1Projective::identity();
+		for share in shares.iter() {
+			sum += share.data.0 * lagrange_coef(shares, share.creator);
 		}
 
-		if shares.iter().any(|s| !self.verify_share(s)) {
-			return None;
+		Randomness {
+			nonce: shares[0].nonce.clone(),
+			data: Signature {
+				0: G1Affine::from(sum),
+			},
 		}
-
-		if shares
-			.iter()
-			.filter(|share| shares.iter().filter(|s| s == share).count() == 1)
-			.count() < self.threshold
-		{
-			return None;
-		}
-
-		let nonce = shares[0].nonce.clone();
-		if shares.iter().any(|s| s.nonce != nonce) {
-			return None;
-		}
-
-		// TODO: replace the following mock
-		let master_key = ShareProvider::from_seed(MASTER_SEED);
-		let data = master_key.sign(&nonce);
-		Some(Randomness { nonce, data })
 	}
 
-	pub fn verify_randomness(&self, randomness: Randomness) -> bool {
+	pub fn verify_randomness(&self, randomness: &Randomness) -> bool {
 		self.master_key.verify(randomness)
 	}
 
@@ -231,7 +269,6 @@ impl KeyBox {
 		self.threshold
 	}
 }
-*/
 
 // TODO: this hashing function gen ^ hash(nonce) is not secure as the log is known for the result.
 // Change to try-and-increment or a deterministic one at the earliest convinience.
@@ -255,6 +292,14 @@ pub fn hash_to_curve(nonce: &Vec<u8>) -> G1Affine {
 #[cfg(test)]
 mod tests {
 	use super::*;
+
+	#[test]
+	fn hash() {
+		let nonce = random_nonce();
+		let point = hash_to_curve(&nonce);
+		assert_eq!(point.is_on_curve().unwrap_u8(), 1);
+		assert_eq!(point.is_torsion_free().unwrap_u8(), 1);
+	}
 
 	#[test]
 	fn encode_decode_signature() {
@@ -282,10 +327,34 @@ mod tests {
 	}
 
 	#[test]
-	fn hash() {
+	fn combine_shares() {
+		let (n_members, threshold) = (3, 2);
+		let (share_providers, master_key) = generate_threshold_pairs(n_members, threshold);
+		let mut verifiers = Vec::new();
+		for id in 0usize..n_members {
+			verifiers.push(share_providers[id].verify_key());
+		}
+		let master_key = RandomnessVerifier::new(master_key);
+
+		let mut kbs = Vec::new();
+		for id in 0..n_members {
+			kbs.push(KeyBox::new(
+				id as u64,
+				share_providers[id].clone(),
+				verifiers.clone(),
+				master_key.clone(),
+				threshold,
+			))
+		}
+
 		let nonce = random_nonce();
-		let point = hash_to_curve(&nonce);
-		assert_eq!(point.is_on_curve().unwrap_u8(), 1);
-		assert_eq!(point.is_torsion_free().unwrap_u8(), 1);
+		let mut shares = Vec::new();
+		for id in 0..threshold {
+			shares.push(kbs[id].generate_share(&nonce));
+		}
+
+		let randomness = kbs[0].combine_shares(&shares);
+
+		assert!(kbs[0].verify_randomness(&randomness));
 	}
 }
