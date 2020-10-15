@@ -1,7 +1,7 @@
 #![cfg_attr(not(feature = "std"), no_std)]
 pub mod inherents;
 
-use codec::{Decode, Encode, Error, Input, Output};
+use codec::{Decode, Encode, EncodeLike, Error, Input, Output};
 use sp_std::vec::Vec;
 
 use rand::{thread_rng, Rng};
@@ -10,7 +10,7 @@ use bls12_381::{G1Affine, G1Projective, G2Affine, Scalar};
 use pairing::PairingCurveAffine;
 use sha3::{Digest, Sha3_256};
 
-pub const START_BEACON_HEIGHT: u64 = 2;
+pub const START_BEACON_HEIGHT: u32 = 2;
 
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Signature(G1Affine);
@@ -35,10 +35,55 @@ impl Decode for Signature {
 	}
 }
 
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct VerifyKey {
 	point: G2Affine,
 }
+
+impl Encode for VerifyKey {
+	fn encode_to<T: Output>(&self, dest: &mut T) {
+		Encode::encode_to(&self.point.to_compressed().to_vec(), dest);
+	}
+}
+
+impl Decode for VerifyKey {
+	fn decode<I: Input>(input: &mut I) -> Result<Self, Error> {
+		let mut bytes = [0u8; 96];
+		let vec = Vec::decode(input)?;
+		bytes.copy_from_slice(&vec[..]);
+		let point = G2Affine::from_compressed(&bytes);
+		if point.is_none().unwrap_u8() == 1 {
+			return Err("could not decode G1Affine point".into());
+		}
+
+		Ok(VerifyKey {
+			point: point.unwrap(),
+		})
+	}
+}
+
+// TODO this is a mock till a key box and randomness_verifier are not incorporated into pallet
+pub fn verify_randomness(_verify_key: &VerifyKey, _randomness: &Randomness) -> bool {
+	true
+}
+
+pub fn alice_bob_pairs() -> (Pair, Pair) {
+	let secret = Scalar::from(1);
+	let alice_pair = Pair {
+		secret,
+		verify: VerifyKey::from_secret(&secret),
+	};
+	let secret = Scalar::from(2);
+	let bob_pair = Pair {
+		secret,
+		verify: VerifyKey::from_secret(&secret),
+	};
+
+	(alice_pair, bob_pair)
+}
+
+impl EncodeLike for VerifyKey {}
+
 pub type Nonce = Vec<u8>;
 
 impl VerifyKey {
@@ -91,6 +136,8 @@ impl Pair {
 		self.verify.clone()
 	}
 }
+
+pub type ShareProvider = Pair;
 
 fn poly_eval(coeffs: &Vec<Scalar>, x: &Scalar) -> Scalar {
 	let mut eval = Scalar::zero();

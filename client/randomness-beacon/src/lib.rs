@@ -2,14 +2,14 @@ use codec::{Decode, Encode};
 use log::info;
 
 use sc_network::PeerId;
-use sc_network_gossip::{Network,
-	GossipEngine, TopicNotification, ValidationResult, Validator, ValidatorContext,
+use sc_network_gossip::{
+	GossipEngine, Network, TopicNotification, ValidationResult, Validator, ValidatorContext,
 };
 
-use sp_core::{crypto::Pair, traits::BareCryptoStorePtr};
+use sp_core::traits::BareCryptoStorePtr;
 use sp_runtime::traits::Block as BlockT;
 
-use sp_randomness_beacon::{KeyBox, Nonce, Randomness, RandomnessVerifier, Share, ShareProvider};
+use sp_randomness_beacon::{KeyBox, Nonce, Randomness, RandomnessVerifier, Share, VerifyKey};
 
 use futures::{channel::mpsc::Receiver, prelude::*};
 use parking_lot::Mutex;
@@ -158,7 +158,6 @@ impl<B: BlockT> Unpin for RandomnessGossip<B> {}
 impl<B: BlockT> RandomnessGossip<B> {
 	pub fn new<N: Network<B> + Send + Clone + 'static>(
 		id: String,
-		n_members: usize,
 		threshold: usize,
 		randomness_nonce_rx: Receiver<Nonce>,
 		network: N,
@@ -171,34 +170,20 @@ impl<B: BlockT> RandomnessGossip<B> {
 			Arc::new(GossipValidator::new()),
 		)));
 
-
-		// Here the keys are hardcoded in the absence of DKG.
-		// This is temporary and will be removed in the 2nd Milestone.
-		let seeds = [
-			b"00000000000000000000000000000000",
-			b"00000000000000000000000000000001",
-			b"00000000000000000000000000000002",
-			b"00000000000000000000000000000003",
-			b"00000000000000000000000000000004",
-		];
-
-		assert!(n_members < seeds.len());
-		let mut verify_keys = Vec::new();
-		for i in 0..n_members {
-			verify_keys.push(ShareProvider::from_seed(seeds[i]).public());
-		}
-
 		// Currently, for testing purposes, it only supports Alice and Bob.
-		let id = if id == "Alice" { 0 } else { 1 };
-		let share_provider = Pair::from_seed(seeds[id]);
-		let master_key = ShareProvider::from_seed(sp_randomness_beacon::MASTER_SEED).public();
+		// This is temporary and will be removed in the 2nd Milestone.
+		let (ap, bp) = sp_randomness_beacon::alice_bob_pairs();
 
-		// TODO: actually construct, milestone 2
+		let verify_keys = vec![ap.verify_key(), bp.verify_key()];
+
+		let (id, share_provider) = if id == "Alice" { (0, ap) } else { (1, bp) };
+		let master_key = RandomnessVerifier::new(VerifyKey::default());
+
 		let keybox = KeyBox::new(
-			id as u32,
+			id as u64,
 			share_provider,
 			verify_keys,
-			RandomnessVerifier::new(master_key),
+			master_key,
 			threshold,
 		);
 
@@ -308,17 +293,16 @@ impl<B: BlockT> Future for RandomnessGossip<B> {
 					let share: Share = Decode::decode(&mut &*message.data).unwrap();
 					if keybox.verify_share(&share) {
 						shares.push(share);
-						let mut randomness = None;
 						// TODO: the following needs an overhaul
-						if shares.len() >= threshold {
-							randomness = keybox.combine_shares(shares);
-						}
+						if shares.len() == threshold {
+							let randomness = keybox.combine_shares(shares);
 
-						// When randomness succesfully combined, notify block proposer
-						if randomness.is_some() {
-							let randomness = randomness.unwrap();
+							// When randomness succesfully combined, notify block proposer
 							if let Some(ref randomness_tx) = randomness_tx {
-								assert!( randomness_tx.send(randomness).is_ok(), "problem with sending new randomness to the block proposer");
+								assert!(
+									randomness_tx.send(randomness).is_ok(),
+									"problem with sending new randomness to the block proposer"
+								);
 							}
 						}
 					}
@@ -341,16 +325,20 @@ impl<B: BlockT> Future for RandomnessGossip<B> {
 
 #[cfg(test)]
 mod tests {
+	use super::*;
 	use futures::channel::mpsc::channel;
-	use std::{borrow::Cow};
-	use sp_runtime::{ConsensusEngineId};
+	use futures::{
+		channel::mpsc::{unbounded, UnboundedSender},
+		executor::block_on,
+		future::poll_fn,
+	};
 	use sc_network::{Event, ReputationChange};
-	use sc_network_gossip::{Network};
-	use futures::{channel::mpsc::{unbounded, UnboundedSender}, executor::block_on, future::poll_fn};
-	use sp_runtime::{testing::H256, traits::{Block as BlockT}};
+	use sc_network_gossip::Network;
+	use sp_runtime::ConsensusEngineId;
+	use sp_runtime::{testing::H256, traits::Block as BlockT};
+	use std::borrow::Cow;
 	use std::sync::{Arc, Mutex};
 	use substrate_test_runtime_client::runtime::Block;
-	use super::*;
 
 	#[derive(Clone, Default)]
 	struct TestNetwork {
@@ -370,8 +358,7 @@ mod tests {
 			Box::pin(rx)
 		}
 
-		fn report_peer(&self, _: PeerId, _: ReputationChange) {
-		}
+		fn report_peer(&self, _: PeerId, _: ReputationChange) {}
 
 		fn disconnect_peer(&self, _: PeerId) {
 			unimplemented!();
@@ -387,7 +374,6 @@ mod tests {
 			unimplemented!();
 		}
 	}
-
 
 	#[test]
 	fn starts_messaging_on_nonce_notification() {
@@ -414,17 +400,15 @@ mod tests {
 		assert!(a_notify_nonce_tx.try_send(enc_nonce.clone()).is_ok());
 
 		block_on(poll_fn(|cx| {
-				for _ in 0..50 {
-					let res = alice_rg.poll_unpin(cx);
-					info!("res: {:?}", res);
-					if let Poll::Ready(()) = res {
-						unreachable!(
-							"As long as network is alive, RandomnessGossip should go on."
-						);
-					}
+			for _ in 0..50 {
+				let res = alice_rg.poll_unpin(cx);
+				info!("res: {:?}", res);
+				if let Poll::Ready(()) = res {
+					unreachable!("As long as network is alive, RandomnessGossip should go on.");
 				}
-				Poll::Ready(())
-			}));
+			}
+			Poll::Ready(())
+		}));
 		assert!(alice_rg.topics.contains_key(&nonce));
 	}
 }

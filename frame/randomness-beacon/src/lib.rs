@@ -59,7 +59,8 @@ decl_module! {
 
 		fn on_initialize(now: T::BlockNumber) -> Weight {
 			if !<Self as Store>::RandomnessVerifier::exists() {
-				 <Self as Store>::RandomnessVerifier::set(sp_randomness_beacon::generate_verify_key());
+				// TODO: this add default verify_key, refactor to add the proper one
+				 <Self as Store>::RandomnessVerifier::set(sp_randomness_beacon::VerifyKey::default());
 			}
 
 			0
@@ -150,7 +151,7 @@ impl<T: Trait> ProvideInherent for Module<T> {
 		};
 		let verify_key = Self::verifier();
 		let randomness = Randomness::decode(&mut &*random_bytes).unwrap();
-		if !sp_randomness_beacon::verify_randomness(&verify_key, randomness) {
+		if !sp_randomness_beacon::verify_randomness(&verify_key, &randomness) {
 			return Err(sp_randomness_beacon::inherents::InherentError::InvalidRandomBytes);
 		}
 		Ok(())
