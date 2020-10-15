@@ -8496,6 +8496,7 @@ dependencies = [
  "log",
  "parity-scale-codec",
  "parking_lot 0.10.2",
+ "rand 0.7.3",
  "sha3",
  "sp-api",
  "sp-application-crypto",

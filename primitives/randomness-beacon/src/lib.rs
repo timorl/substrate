@@ -1,45 +1,58 @@
 #![cfg_attr(not(feature = "std"), no_std)]
 pub mod inherents;
 
-use codec::{Decode, Encode};
-#[cfg(feature = "std")]
-use sp_core::crypto::Pair;
+use codec::{Decode, Encode, Error, Input, Output};
 use sp_std::vec::Vec;
 
-use bls12_381::{G2Affine, Scalar};
+use bls12_381::{G1Affine, G2Affine, Scalar};
 use sha3::{Digest, Sha3_256};
-
-pub mod app {
-	use sp_application_crypto::{app_crypto, ed25519, key_types::RANDOMNESS_BEACON};
-	app_crypto!(ed25519, RANDOMNESS_BEACON);
-}
-
-sp_application_crypto::with_pair! {
-	pub type ShareProvider = app::Pair;
-}
 
 pub const START_BEACON_HEIGHT: u32 = 2;
 
-pub const MASTER_SEED: &[u8; 32] = b"12345678901234567890123456789012";
-const MASTER_MATERIAL: [u8; 32] = [
-	47, 140, 97, 41, 216, 22, 207, 81, 195, 116, 188, 127, 8, 195, 230, 62, 209, 86, 207, 120, 174,
-	251, 74, 101, 80, 217, 123, 135, 153, 121, 119, 238,
-];
+pub struct VerifyKey {
+	key: G2Affine,
+}
 
-pub type VerifyKey = app::Public;
+pub struct SecretKey {
+	key: Scalar,
+}
+
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Signature(G1Affine);
+
+impl Encode for Signature {
+	fn encode_to<T: Output>(&self, dest: &mut T) {
+		Encode::encode_to(&self.0.to_compressed().to_vec(), dest);
+	}
+}
+
+impl Decode for Signature {
+	fn decode<I: Input>(input: &mut I) -> Result<Self, Error> {
+		let mut bytes = [0u8; 48];
+		let vec = Vec::decode(input)?;
+		bytes.copy_from_slice(&vec[..]);
+		let point = G1Affine::from_compressed(&bytes);
+		if point.is_none().unwrap_u8() == 1 {
+			return Err("could not decode G1Affine point".into());
+		}
+
+		Ok(Signature { 0: point.unwrap() })
+	}
+}
 
 pub type Nonce = Vec<u8>;
+
 #[derive(PartialEq, Decode, Encode)]
 pub struct Share {
 	creator: u32,
 	nonce: Nonce,
-	data: app::Signature,
+	data: Signature,
 }
 
 #[derive(Encode, Decode, Clone, Debug, Default)]
 pub struct Randomness {
 	nonce: Nonce,
-	data: app::Signature,
+	data: Signature,
 }
 
 impl Randomness {
@@ -51,11 +64,12 @@ impl Randomness {
 impl From<(Nonce, Vec<u8>)> for Randomness {
 	fn from((nonce, random_bytes): (Nonce, Vec<u8>)) -> Randomness {
 		let nonce = nonce.clone();
-		let data = app::Signature::decode(&mut &random_bytes[..]).unwrap();
+		let data = Signature::decode(&mut &random_bytes[..]).unwrap();
 		Randomness { nonce, data }
 	}
 }
 
+/*
 pub fn verify_randomness(verify_key: &VerifyKey, randomness: Randomness) -> bool {
 	<VerifyKey as sp_runtime::RuntimeAppPublic>::verify(
 		verify_key,
@@ -184,10 +198,11 @@ impl KeyBox {
 		self.threshold
 	}
 }
+*/
 
 // TODO: this hashing function gen ^ hash(nonce) is not secure as the log is known for the result.
 // Change to try-and-increment or a deterministic one at the earliest convinience.
-pub fn hash_to_g2(nonce: Vec<u8>) -> G2Affine {
+pub fn hash_to_curve(nonce: Vec<u8>) -> G1Affine {
 	let mut hasher = Sha3_256::new();
 	hasher.input(&nonce);
 	let data = hasher.result();
@@ -201,14 +216,35 @@ pub fn hash_to_g2(nonce: Vec<u8>) -> G2Affine {
 
 	let scalar = Scalar::from_raw(scalar_raw);
 
-	G2Affine::from(G2Affine::generator() * scalar)
+	G1Affine::from(G1Affine::generator() * scalar)
 }
 
 #[cfg(test)]
 mod tests {
 	use super::*;
-	use sp_core::crypto::{Pair, Public};
+	use rand::{thread_rng, Rng};
+	#[test]
+	fn encode_decode_signature() {
+		let mut rng = thread_rng();
+		let scalar = Scalar::from_raw([rng.gen(), rng.gen(), rng.gen(), rng.gen()]);
+		let sig = Signature {
+			0: G1Affine::from(G1Affine::generator() * scalar),
+		};
 
+		let decoded = Signature::decode(&mut &Signature::encode(&sig)[..]);
+		assert!(decoded.is_ok());
+		assert_eq!(decoded.unwrap(), sig);
+	}
+
+	#[test]
+	fn hash() {
+		let nonce = [1u8; 48].to_vec();
+		let point = hash_to_curve(nonce);
+		assert_eq!(point.is_on_curve().unwrap_u8(), 1);
+		assert_eq!(point.is_torsion_free().unwrap_u8(), 1);
+	}
+
+	/*
 	#[test]
 	fn reject_wrong_randomness() {
 		let master_key = generate_verify_key();
@@ -252,12 +288,5 @@ mod tests {
 		share.creator = 1;
 		assert!(!keybox.verify_share(&share));
 	}
-
-	#[test]
-	fn hash() {
-		let nonce = MASTER_SEED.to_vec();
-		let point = hash_to_g2(nonce);
-		assert_eq!(point.is_on_curve().unwrap_u8(), 1);
-		assert_eq!(point.is_torsion_free().unwrap_u8(), 1);
-	}
+	*/
 }
