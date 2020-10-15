@@ -4,18 +4,13 @@ pub mod inherents;
 use codec::{Decode, Encode, Error, Input, Output};
 use sp_std::vec::Vec;
 
+use rand::{thread_rng, Rng};
+
 use bls12_381::{G1Affine, G2Affine, Scalar};
+use pairing::PairingCurveAffine;
 use sha3::{Digest, Sha3_256};
 
 pub const START_BEACON_HEIGHT: u32 = 2;
-
-pub struct VerifyKey {
-	key: G2Affine,
-}
-
-pub struct SecretKey {
-	key: Scalar,
-}
 
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Signature(G1Affine);
@@ -40,7 +35,61 @@ impl Decode for Signature {
 	}
 }
 
+#[derive(Clone)]
+pub struct VerifyKey {
+	point: G2Affine,
+}
 pub type Nonce = Vec<u8>;
+
+impl VerifyKey {
+	fn verify(&self, msg: &Vec<u8>, sgn: &Signature) -> bool {
+		let p1 = sgn.0.pairing_with(&G2Affine::generator());
+		let p2 = hash_to_curve(msg).pairing_with(&self.point);
+
+		p1 == p2
+	}
+
+	fn from_secret(secret: &Scalar) -> Self {
+		VerifyKey {
+			point: G2Affine::from(G2Affine::generator() * secret),
+		}
+	}
+}
+
+pub struct Pair {
+	secret: Scalar,
+	verify: VerifyKey,
+}
+
+fn random_scalar() -> Scalar {
+	let mut rng = thread_rng();
+	Scalar::from_raw([rng.gen(), rng.gen(), rng.gen(), rng.gen()])
+}
+
+impl Pair {
+	pub fn generate() -> Self {
+		let secret = random_scalar();
+		let verify = VerifyKey::from_secret(&secret);
+
+		Pair { secret, verify }
+	}
+
+	pub fn sign(&self, msg: &Vec<u8>) -> Signature {
+		let point = hash_to_curve(msg);
+
+		Signature {
+			0: G1Affine::from(point * self.secret),
+		}
+	}
+
+	fn verify(&self, msg: &Vec<u8>, sgn: &Signature) -> bool {
+		self.verify.verify(msg, sgn)
+	}
+
+	pub fn verify_key(&self) -> VerifyKey {
+		self.verify.clone()
+	}
+}
 
 #[derive(PartialEq, Decode, Encode)]
 pub struct Share {
@@ -69,38 +118,22 @@ impl From<(Nonce, Vec<u8>)> for Randomness {
 	}
 }
 
-/*
-pub fn verify_randomness(verify_key: &VerifyKey, randomness: Randomness) -> bool {
-	<VerifyKey as sp_runtime::RuntimeAppPublic>::verify(
-		verify_key,
-		&randomness.nonce,
-		&randomness.data,
-	)
-}
-
-pub fn generate_verify_key() -> VerifyKey {
-	sp_application_crypto::ed25519::Public::from_raw(MASTER_MATERIAL).into()
-}
-
 #[derive(Clone)]
 pub struct RandomnessVerifier {
 	master_key: VerifyKey,
 }
 
 impl RandomnessVerifier {
-	pub fn new(master_key: VerifyKey) -> Self {
+	fn new(master_key: VerifyKey) -> Self {
 		RandomnessVerifier { master_key }
 	}
 
-	pub fn verify(&self, randomness: Randomness) -> bool {
-		<VerifyKey as sp_runtime::RuntimeAppPublic>::verify(
-			&self.master_key,
-			&randomness.nonce,
-			&randomness.data,
-		)
+	pub fn verify(&self, randomness: &Randomness) -> bool {
+		self.master_key.verify(&randomness.nonce, &randomness.data)
 	}
 }
 
+/*
 #[cfg(feature = "std")]
 pub struct KeyBox {
 	id: u32,
@@ -202,9 +235,9 @@ impl KeyBox {
 
 // TODO: this hashing function gen ^ hash(nonce) is not secure as the log is known for the result.
 // Change to try-and-increment or a deterministic one at the earliest convinience.
-pub fn hash_to_curve(nonce: Vec<u8>) -> G1Affine {
+pub fn hash_to_curve(nonce: &Vec<u8>) -> G1Affine {
 	let mut hasher = Sha3_256::new();
-	hasher.input(&nonce);
+	hasher.input(nonce);
 	let data = hasher.result();
 
 	let mut scalar_raw = [0u64; 4];
@@ -222,11 +255,10 @@ pub fn hash_to_curve(nonce: Vec<u8>) -> G1Affine {
 #[cfg(test)]
 mod tests {
 	use super::*;
-	use rand::{thread_rng, Rng};
+
 	#[test]
 	fn encode_decode_signature() {
-		let mut rng = thread_rng();
-		let scalar = Scalar::from_raw([rng.gen(), rng.gen(), rng.gen(), rng.gen()]);
+		let scalar = random_scalar();
 		let sig = Signature {
 			0: G1Affine::from(G1Affine::generator() * scalar),
 		};
@@ -236,57 +268,24 @@ mod tests {
 		assert_eq!(decoded.unwrap(), sig);
 	}
 
+	fn random_nonce() -> Nonce {
+		rand::thread_rng().gen::<[u8; 32]>().to_vec()
+	}
+
+	#[test]
+	fn correct_sign() {
+		let pair = Pair::generate();
+		let msg = random_nonce();
+		let sgn = pair.sign(&msg);
+
+		assert!(pair.verify(&msg, &sgn));
+	}
+
 	#[test]
 	fn hash() {
-		let nonce = [1u8; 48].to_vec();
-		let point = hash_to_curve(nonce);
+		let nonce = random_nonce();
+		let point = hash_to_curve(&nonce);
 		assert_eq!(point.is_on_curve().unwrap_u8(), 1);
 		assert_eq!(point.is_torsion_free().unwrap_u8(), 1);
 	}
-
-	/*
-	#[test]
-	fn reject_wrong_randomness() {
-		let master_key = generate_verify_key();
-		let verifier = RandomnessVerifier::new(master_key);
-
-		let master_key = ShareProvider::from_seed(MASTER_SEED);
-
-		let nonce = b"1729".to_vec();
-		let data = master_key.sign(&nonce);
-		let randomness = Randomness {
-			nonce,
-			data: data.clone(),
-		};
-		assert!(verifier.verify(randomness));
-
-		let nonce = b"2137".to_vec();
-		let randomness = Randomness { nonce, data };
-		assert!(!verifier.verify(randomness));
-	}
-
-	#[test]
-	fn reject_wrong_share() {
-		let data = b"00000000000000000000000000000000";
-		let _master_key = VerifyKey::from_slice(data);
-		let verifier = RandomnessVerifier::new(_master_key);
-		let seed = b"17291729172917291729172917291729";
-		let share_provider1 = ShareProvider::from_seed(seed);
-		let seed = b"21372137213721372137213721372137";
-		let share_provider2 = ShareProvider::from_seed(seed);
-		let verify_keys = vec![share_provider1.public(), share_provider2.public()];
-		let id = 0;
-		let threshold = 1;
-		let keybox = KeyBox::new(id, share_provider1, verify_keys, verifier, threshold);
-
-		let nonce = b"1729".to_vec();
-		let mut share = keybox.generate_share(&nonce);
-		assert!(keybox.verify_share(&share));
-		share.nonce = b"2137".to_vec();
-		assert!(!keybox.verify_share(&share));
-		share.nonce = b"1729".to_vec();
-		share.creator = 1;
-		assert!(!keybox.verify_share(&share));
-	}
-	*/
 }

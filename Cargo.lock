@@ -8494,6 +8494,7 @@ version = "0.1.0"
 dependencies = [
  "bls12_381",
  "log",
+ "pairing",
  "parity-scale-codec",
  "parking_lot 0.10.2",
  "rand 0.7.3",
