@@ -1,13 +1,17 @@
 #![cfg_attr(not(feature = "std"), no_std)]
+
 pub mod inherents;
 
 use codec::{Decode, Encode, EncodeLike, Error, Input, Output};
 use sp_std::vec::Vec;
 
+#[cfg(feature = "std")]
 use rand::{thread_rng, Rng};
 
 use bls12_381::{G1Affine, G1Projective, G2Affine, Scalar};
 use pairing::PairingCurveAffine;
+
+#[cfg(any(feature = "full_crypto", feature = "std"))]
 use sha3::{Digest, Sha3_256};
 
 pub const START_BEACON_HEIGHT: u32 = 2;
@@ -67,6 +71,7 @@ pub fn verify_randomness(_verify_key: &VerifyKey, _randomness: &Randomness) -> b
 	true
 }
 
+#[cfg(feature = "std")]
 pub fn alice_bob_pairs() -> (Pair, Pair) {
 	let secret = Scalar::from(1);
 	let alice_pair = Pair {
@@ -87,6 +92,7 @@ impl EncodeLike for VerifyKey {}
 pub type Nonce = Vec<u8>;
 
 impl VerifyKey {
+	#[cfg(any(feature = "full_crypto", feature = "std"))]
 	fn verify(&self, msg: &Vec<u8>, sgn: &Signature) -> bool {
 		let p1 = sgn.0.pairing_with(&G2Affine::generator());
 		let p2 = hash_to_curve(msg).pairing_with(&self.point);
@@ -101,17 +107,29 @@ impl VerifyKey {
 	}
 }
 
-#[derive(Clone)]
+#[cfg(any(feature = "full_crypto", feature = "std"))]
 pub struct Pair {
 	secret: Scalar,
 	verify: VerifyKey,
 }
 
+#[cfg(any(feature = "full_crypto", feature = "std"))]
+impl Clone for Pair {
+	fn clone(&self) -> Self {
+		Pair {
+			secret: self.secret.clone(),
+			verify: self.verify.clone(),
+		}
+	}
+}
+
+#[cfg(feature = "std")]
 fn random_scalar() -> Scalar {
 	let mut rng = thread_rng();
 	Scalar::from_raw([rng.gen(), rng.gen(), rng.gen(), rng.gen()])
 }
 
+#[cfg(any(feature = "full_crypto", feature = "std"))]
 impl Pair {
 	pub fn generate() -> Self {
 		let secret = random_scalar();
@@ -120,6 +138,7 @@ impl Pair {
 		Pair { secret, verify }
 	}
 
+	#[cfg(any(feature = "full_crypto", feature = "std"))]
 	pub fn sign(&self, msg: &Vec<u8>) -> Signature {
 		let point = hash_to_curve(msg);
 
@@ -137,6 +156,7 @@ impl Pair {
 	}
 }
 
+#[cfg(any(feature = "full_crypto", feature = "std"))]
 pub type ShareProvider = Pair;
 
 fn poly_eval(coeffs: &Vec<Scalar>, x: &Scalar) -> Scalar {
@@ -149,6 +169,7 @@ fn poly_eval(coeffs: &Vec<Scalar>, x: &Scalar) -> Scalar {
 	eval
 }
 
+#[cfg(feature = "std")]
 pub fn generate_threshold_pairs(n_members: usize, threshold: usize) -> (Vec<Pair>, VerifyKey) {
 	assert!(n_members >= threshold && threshold > 0);
 
@@ -206,6 +227,7 @@ pub struct RandomnessVerifier {
 	master_key: VerifyKey,
 }
 
+#[cfg(any(feature = "full_crypto", feature = "std"))]
 impl RandomnessVerifier {
 	pub fn new(master_key: VerifyKey) -> Self {
 		RandomnessVerifier { master_key }
@@ -216,7 +238,7 @@ impl RandomnessVerifier {
 	}
 }
 
-#[cfg(feature = "std")]
+#[cfg(any(feature = "full_crypto", feature = "std"))]
 pub struct KeyBox {
 	id: u64,
 	share_provider: Pair,
@@ -225,7 +247,7 @@ pub struct KeyBox {
 	threshold: usize,
 }
 
-#[cfg(feature = "std")]
+#[cfg(any(feature = "full_crypto", feature = "std"))]
 impl Clone for KeyBox {
 	fn clone(&self) -> Self {
 		KeyBox {
@@ -258,7 +280,7 @@ fn lagrange_coef(shares: &Vec<Share>, x: u64) -> Scalar {
 	num * den.invert().unwrap()
 }
 
-#[cfg(feature = "std")]
+#[cfg(any(feature = "full_crypto", feature = "std"))]
 impl KeyBox {
 	pub fn new(
 		id: u64,
@@ -319,6 +341,7 @@ impl KeyBox {
 
 // TODO: this hashing function gen ^ hash(nonce) is not secure as the log is known for the result.
 // Change to try-and-increment or a deterministic one at the earliest convinience.
+#[cfg(any(feature = "full_crypto", feature = "std"))]
 pub fn hash_to_curve(nonce: &Vec<u8>) -> G1Affine {
 	let mut hasher = Sha3_256::new();
 	hasher.input(nonce);

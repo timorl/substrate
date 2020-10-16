@@ -224,11 +224,9 @@ pub fn new_full(config: Configuration) -> Result<TaskManager, ServiceError> {
 	}
 
 	// TODO: should be read from config
-	let n_members = 2;
 	let threshold = 2;
 	let rg = RandomnessGossip::new(
 		name.clone(),
-		n_members,
 		threshold,
 		randomness_nonce_rx,
 		network.clone(),
