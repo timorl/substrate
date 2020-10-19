@@ -94,6 +94,7 @@ decl_module! {
 		}
 
 		fn offchain_worker(block_number: T::BlockNumber) {
+			print("HELLO RANDOMNESS OFFCHAIN WORKER");
 			// 1. share secret if not shared yet
 
 			// 2. check if there is a dispute that needs to be started

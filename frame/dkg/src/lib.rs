@@ -19,8 +19,11 @@
 
 // use codec::{Decode, Encode};
 use frame_support::{debug, decl_module, decl_storage, dispatch::DispatchResult};
-use frame_system::{ensure_signed, offchain::CreateSignedTransaction};
-use sp_runtime::{offchain::storage::StorageValueRef, RuntimeDebug};
+use frame_system::{
+	ensure_signed,
+	offchain::{AppCrypto, CreateSignedTransaction},
+};
+use sp_runtime::offchain::storage::StorageValueRef;
 use sp_std::vec::Vec;
 
 // These should be perhaps in some config in the genesis block?
@@ -29,25 +32,23 @@ pub const END_ROUND_1: u32 = 10;
 pub const END_ROUND_2: u32 = 15;
 
 pub mod crypto {
-	use sp_core::sr25519::Signature as Sr25519Signature;
-	use sp_runtime::traits::Verify;
+	use sp_runtime::{MultiSignature, MultiSigner};
 
 	pub struct DKGId;
-	impl frame_system::offchain::AppCrypto<<Sr25519Signature as Verify>::Signer, Sr25519Signature>
-		for DKGId
-	{
+	impl frame_system::offchain::AppCrypto<MultiSigner, MultiSignature> for DKGId {
 		type RuntimeAppPublic = sp_dkg::crypto::Public;
 		type GenericSignature = sp_core::sr25519::Signature;
 		type GenericPublic = sp_core::sr25519::Public;
 	}
 }
 
-pub trait Trait: CreateSignedTransaction<Call<Self>> {
-	/// The identifier type for an offchain worker.
-	//type AuthorityId: AppCrypto<Self::Public, Self::Signature>;
+pub trait Trait: frame_system::Trait {}
+//pub trait Trait: CreateSignedTransaction<Call<Self>> {
+// The identifier type for an offchain worker.
+//type AuthorityId: AppCrypto<Self::Public, Self::Signature>;
 
-	type Call: From<Call<Self>>;
-}
+// type Call: From<Call<Self>>;
+//}
 
 // n is the number of nodes in the committee
 // node indices are 1-based: 1, 2, ..., n
@@ -146,25 +147,28 @@ decl_module! {
 
 
 	fn offchain_worker(block_number: T::BlockNumber) {
-		debug::info!("Hello World.");
+		debug::RuntimeLogger::init();
+		debug::warn!("HELLO WORLD FROM OFFCHAIN WORKERS!");
+		debug::info!("HELLO WORLD FROM OFFCHAIN WORKERS!");
+		debug::native::error!("HELLO WORLD FROM OFFCHAIN WORKERS!");
 
-		//implement creating tx for round 0
-		Self::handle_round0(block_number);
-
-
-		if block_number >= END_ROUND_0.into() {
-			// implement creating tx for round 1
-			Self::handle_round1(block_number);
-		}
-
-		if block_number >= END_ROUND_1.into() {
-			// implement creating tx for round 2
-			Self::handle_round2(block_number);
-		}
-
-		if block_number >= END_ROUND_2.into() {
-			// send final master key
-		}
+//		//implement creating tx for round 0
+//		Self::handle_round0(block_number);
+//
+//
+//		if block_number >= END_ROUND_0.into() {
+//			// implement creating tx for round 1
+//			Self::handle_round1(block_number);
+//		}
+//
+//		if block_number >= END_ROUND_1.into() {
+//			// implement creating tx for round 2
+//			Self::handle_round2(block_number);
+//		}
+//
+//		if block_number >= END_ROUND_2.into() {
+//			// send final master key
+//		}
 	}
 	}
 }
@@ -185,8 +189,28 @@ impl<T: Trait> Module<T> {
 		0
 	}
 
-	fn handle_round0(_block_number: T::BlockNumber) {
-		let _val = StorageValueRef::local(b"dkw::enc_key");
+	fn handle_round0(block_number: T::BlockNumber) {
+		debug::print!("DKG handle_round0 called at block: {:?}", block_number);
+		// TODO: encrypt the key
+		const ALREADY_SET: () = ();
+
+		let val = StorageValueRef::persistent(b"dkw::enc_key");
+		let res = val.mutate(|last_set: Option<Option<[u8; 32]>>| match last_set {
+			Some(Some(key)) => {
+				debug::print!("DKG setting the encryption key: {:?}", key);
+				Err(ALREADY_SET)
+			}
+			_ => Ok(sp_io::offchain::random_seed()),
+		});
+
+		match res {
+			Ok(Ok(key)) => {
+				// send tx with key
+				debug::print!("DKG setting the encryption key: {:?}", key);
+			}
+			Err(ALREADY_SET) => debug::print!("DKG error with encryption key already set"),
+			_ => {}
+		}
 
 		// we should use val.mutate() here to check if enc_key was already set
 		// if so we just ignore this call (means we have generated and sent tx for round 0 in the past)
@@ -203,7 +227,11 @@ impl<T: Trait> Module<T> {
 		// );
 	}
 
-	fn handle_round1(_block_number: T::BlockNumber) {}
+	fn handle_round1(block_number: T::BlockNumber) {
+		debug::print!("DKG handle_round1 called at block: {:?}", block_number);
+	}
 
-	fn handle_round2(_block_number: T::BlockNumber) {}
+	fn handle_round2(block_number: T::BlockNumber) {
+		debug::print!("DKG handle_round2 called at block: {:?}", block_number);
+	}
 }
