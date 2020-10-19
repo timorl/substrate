@@ -1,11 +1,8 @@
-use codec::Encode;
 #[cfg(feature = "std")]
 use codec::Decode;
+use codec::Encode;
 use sp_inherents::{InherentIdentifier, IsFatalError};
-use super::{Nonce, Randomness};
 pub const INHERENT_IDENTIFIER: InherentIdentifier = *b"randbecn";
-pub type InherentType = (Nonce, Randomness);
-
 
 /// Errors that can occur while checking the inherent
 #[derive(Encode, sp_runtime::RuntimeDebug)]
@@ -36,4 +33,3 @@ impl IsFatalError for InherentError {
 		}
 	}
 }
-

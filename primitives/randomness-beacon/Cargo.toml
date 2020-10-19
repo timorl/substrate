@@ -41,6 +41,7 @@ std = [
 	"sp-api/std",
 	"sp-std/std",
 ]
+
 full_crypto = [
 	"sha3",
 ]

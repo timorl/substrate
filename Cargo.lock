@@ -4548,17 +4548,11 @@ dependencies = [
 name = "pallet-dkg"
 version = "0.1.0"
 dependencies = [
- "bls12_381",
  "frame-support",
  "frame-system",
- "impl-trait-for-tuples",
- "lite-json",
  "parity-scale-codec",
- "sp-authorship",
  "sp-core",
- "sp-inherents",
- "sp-io",
- "sp-randomness-beacon",
+ "sp-dkg",
  "sp-runtime",
  "sp-std",
 ]
@@ -4876,7 +4870,6 @@ dependencies = [
  "impl-trait-for-tuples",
  "parity-scale-codec",
  "sp-authorship",
- "sp-core",
  "sp-inherents",
  "sp-io",
  "sp-randomness-beacon",
@@ -6122,6 +6115,7 @@ dependencies = [
  "sp-consensus",
  "sp-consensus-aura",
  "sp-core",
+ "sp-dkg",
  "sp-finality-grandpa",
  "sp-inherents",
  "sp-randomness-beacon",
@@ -6142,6 +6136,7 @@ dependencies = [
  "frame-system-rpc-runtime-api",
  "pallet-aura",
  "pallet-balances",
+ "pallet-dkg",
  "pallet-grandpa",
  "pallet-randomness-beacon",
  "pallet-randomness-collective-flip",
@@ -8355,6 +8350,20 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn",
+]
+
+[[package]]
+name = "sp-dkg"
+version = "0.1.0"
+dependencies = [
+ "bls12_381",
+ "pairing",
+ "parity-scale-codec",
+ "rand 0.7.3",
+ "sha3",
+ "sp-core",
+ "sp-runtime",
+ "sp-std",
 ]
 
 [[package]]

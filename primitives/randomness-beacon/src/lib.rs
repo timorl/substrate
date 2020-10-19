@@ -126,13 +126,27 @@ impl Clone for Pair {
 #[cfg(feature = "std")]
 fn random_scalar() -> Scalar {
 	let mut rng = thread_rng();
-	Scalar::from_raw([rng.gen(), rng.gen(), rng.gen(), rng.gen()])
+	let seed = [rng.gen(), rng.gen(), rng.gen(), rng.gen()];
+	scalar_from_seed(seed)
+}
+
+#[cfg(any(feature = "full_crypto", feature = "std"))]
+fn scalar_from_seed(seed: [u64; 4]) -> Scalar {
+	Scalar::from_raw(seed)
 }
 
 #[cfg(any(feature = "full_crypto", feature = "std"))]
 impl Pair {
 	pub fn generate() -> Self {
 		let secret = random_scalar();
+		let verify = VerifyKey::from_secret(&secret);
+
+		Pair { secret, verify }
+	}
+
+	#[cfg(any(feature = "full_crypto", feature = "std"))]
+	pub fn from_seed(seed: [u64; 4]) -> Self {
+		let secret = scalar_from_seed(seed);
 		let verify = VerifyKey::from_secret(&secret);
 
 		Pair { secret, verify }

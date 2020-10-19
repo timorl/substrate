@@ -1,7 +1,6 @@
 //! Service and ServiceFactory implementation. Specialized wrapper over substrate service.
 
 use futures::channel::mpsc::{channel, Receiver};
-use log::info;
 use parking_lot::Mutex;
 use rb_node_runtime::{self, opaque::Block, RuntimeApi};
 use sc_client_api::{ExecutorProvider, RemoteBackend};
@@ -12,7 +11,6 @@ use sc_finality_grandpa::{
 };
 use sc_service::{error::Error as ServiceError, Configuration, TaskManager};
 use sp_consensus_aura::sr25519::AuthorityPair as AuraPair;
-use sp_core::crypto::key_types::DUMMY;
 use sp_inherents::InherentDataProviders;
 use std::sync::Arc;
 
@@ -120,20 +118,13 @@ pub fn new_full(config: Configuration) -> Result<TaskManager, ServiceError> {
 		..
 	} = new_partial(&config)?;
 
-	let keys = (keystore.clone() as sp_core::traits::BareCryptoStorePtr)
-		.read()
-		.ed25519_public_keys(DUMMY);
-	let public = if keys.len() > 0 {
-		keys[0]
-	} else {
-		(keystore.clone() as sp_core::traits::BareCryptoStorePtr)
+	// TODO: hack for development: add keys for dkg
+	if let Some(seed) = config.dev_key_seed.clone() {
+		keystore
 			.write()
-			.ed25519_generate_new(DUMMY, None)
-			.unwrap()
-	};
-
-	let name = config.network.node_name.clone();
-	info!("{} key is {}", name, public);
+			.insert_ephemeral_from_seed_by_type::<sp_dkg::crypto::Pair>(&seed, sp_dkg::KEY_TYPE)
+			.expect("Dev Seed should always succeed.");
+	}
 
 	let (network, network_status_sinks, system_rpc_tx, network_starter) =
 		sc_service::build_network(sc_service::BuildNetworkParams {
