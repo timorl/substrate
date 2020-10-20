@@ -138,6 +138,17 @@ pub fn new_full(config: Configuration) -> Result<TaskManager, ServiceError> {
 			finality_proof_request_builder: None,
 			finality_proof_provider: None,
 		})?;
+
+	if config.offchain_worker.enabled {
+		sc_service::build_offchain_workers(
+			&config,
+			backend.clone(),
+			task_manager.spawn_handle(),
+			client.clone(),
+			network.clone(),
+		);
+	}
+
 	let role = config.role.clone();
 	let force_authoring = config.force_authoring;
 	let name = config.network.node_name.clone();

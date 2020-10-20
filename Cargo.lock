@@ -4871,6 +4871,7 @@ dependencies = [
  "impl-trait-for-tuples",
  "parity-scale-codec",
  "sp-authorship",
+ "sp-core",
  "sp-inherents",
  "sp-io",
  "sp-randomness-beacon",

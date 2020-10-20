@@ -26,6 +26,7 @@ use frame_system::{
 use sp_runtime::offchain::storage::StorageValueRef;
 use sp_std::vec::Vec;
 
+// TODO maybe we could control the round boundaries with events?
 // These should be perhaps in some config in the genesis block?
 pub const END_ROUND_0: u32 = 5;
 pub const END_ROUND_1: u32 = 10;
@@ -42,13 +43,13 @@ pub mod crypto {
 	}
 }
 
-pub trait Trait: frame_system::Trait {}
-//pub trait Trait: CreateSignedTransaction<Call<Self>> {
-// The identifier type for an offchain worker.
-//type AuthorityId: AppCrypto<Self::Public, Self::Signature>;
+pub trait Trait: CreateSignedTransaction<Call<Self>> {
+	/// The identifier type for an offchain worker.
+	type AuthorityId: AppCrypto<Self::Public, Self::Signature>;
 
-// type Call: From<Call<Self>>;
-//}
+	/// The overarching dispatch call type.
+	type Call: From<Call<Self>>;
+}
 
 // n is the number of nodes in the committee
 // node indices are 1-based: 1, 2, ..., n
@@ -147,10 +148,8 @@ decl_module! {
 
 
 	fn offchain_worker(block_number: T::BlockNumber) {
-		debug::RuntimeLogger::init();
-		debug::warn!("HELLO WORLD FROM OFFCHAIN WORKERS!");
-		debug::info!("HELLO WORLD FROM OFFCHAIN WORKERS!");
-		debug::native::error!("HELLO WORLD FROM OFFCHAIN WORKERS!");
+		debug::native::info!("HELLO WORLD FROM OFFCHAIN WORKERS!");
+		debug::debug!("HELLO WORLD FROM OFFCHAIN WORKERS!");
 
 //		//implement creating tx for round 0
 //		Self::handle_round0(block_number);

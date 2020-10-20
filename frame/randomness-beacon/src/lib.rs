@@ -27,8 +27,6 @@ use sp_randomness_beacon::{
 	inherents::{InherentError, INHERENT_IDENTIFIER},
 	Randomness, VerifyKey, START_BEACON_HEIGHT,
 };
-use sp_runtime::print;
-use sp_std::convert::TryInto;
 use sp_std::{result, vec::Vec};
 
 pub trait Trait: frame_system::Trait {}
@@ -92,13 +90,6 @@ decl_module! {
 				assert!(<Self as Store>::DidUpdate::take(), "Randomness must be put into the block");
 			}
 		}
-
-		fn offchain_worker(block_number: T::BlockNumber) {
-			print("HELLO RANDOMNESS OFFCHAIN WORKER");
-			// 1. share secret if not shared yet
-
-			// 2. check if there is a dispute that needs to be started
-		}
 	}
 }
 
@@ -124,10 +115,6 @@ impl<T: Trait> ProvideInherent for Module<T> {
 
 	fn create_inherent(data: &InherentData) -> Option<Self::Call> {
 		let now = <frame_system::Module<T>>::block_number();
-		print((
-			"create_inherent block height: ",
-			now.try_into().unwrap_or_default(),
-		));
 		if now >= T::BlockNumber::from(START_BEACON_HEIGHT) {
 			return Some(Self::Call::set_random_bytes(extract_random_bytes(data)));
 		}
@@ -136,10 +123,6 @@ impl<T: Trait> ProvideInherent for Module<T> {
 
 	fn check_inherent(call: &Self::Call, _: &InherentData) -> result::Result<(), Self::Error> {
 		let now = <frame_system::Module<T>>::block_number();
-		print((
-			"check_inherent block height: ",
-			now.try_into().unwrap_or_default(),
-		));
 		if now < T::BlockNumber::from(START_BEACON_HEIGHT) {
 			return Ok(());
 		}
