@@ -19,6 +19,7 @@ sp-dkg = { version = "0.1.0", default-features = false, path = "../../primitives
 sp-std = { version = "2.0.0", default-features = false, path = "../../primitives/std" }
 sp-core = { version = "2.0.0", default-features = false, path = "../../primitives/core" }
 sp-runtime = { version = "2.0.0", default-features = false, path = "../../primitives/runtime" }
+sp-randomness-beacon= { version = "0.1.0", default-features = false, path = "../../primitives/randomness-beacon" }
 frame-support = { version = "2.0.0", default-features = false, path = "../support" }
 frame-system = { version = "2.0.0", default-features = false, path = "../system" }
 
@@ -37,4 +38,5 @@ std = [
 	"sp-runtime/std",
 	"frame-support/std",
 	"frame-system/std",
+	"sp-randomness-beacon/std",
 ]

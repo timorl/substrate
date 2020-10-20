@@ -21,10 +21,12 @@
 use frame_support::{debug, decl_module, decl_storage, dispatch::DispatchResult};
 use frame_system::{
 	ensure_signed,
-	offchain::{AppCrypto, CreateSignedTransaction},
+	offchain::{AppCrypto, CreateSignedTransaction, SendSignedTransaction, Signer},
 };
 use sp_runtime::offchain::storage::StorageValueRef;
-use sp_std::vec::Vec;
+use sp_std::{convert::TryInto, vec::Vec};
+
+use sp_dkg::EncryptionPublicKey;
 
 // TODO maybe we could control the round boundaries with events?
 // These should be perhaps in some config in the genesis block?
@@ -56,25 +58,10 @@ pub trait Trait: CreateSignedTransaction<Call<Self>> {
 // t is the threshold: it is necessary and sufficient to have t shares to combine
 // the degree of the polynomial is thus t-1
 
-// EncryptPubKey is a pair (g1^s, g2^s), where g1, g2 are generators of G1 nad G2 resp. and s is a secret scalar
-// #[derive(Encode, Decode, Clone, PartialEq, Eq, RuntimeDebug)]
-// pub struct EncryptionPubKey {
-//group1_elem: G1Affine,
-//group2_elem: G2Affine,
-// }
-
-// EncryptPubKey is a pair scalar s
-// #[derive(Encode, Decode, Clone, PartialEq, Eq, RuntimeDebug)]
-// pub struct EncryptionPrivKey {
-//key: Scalar,
-// }
-
 // A commitment to a polynomial p(x) := p_0 + p_1 x + ... + p_{t-1} x^{t-1}
 // Should be a t-tuple of elements of G2=<g2>: g2^{p_0}, g2^{p_1}, ..., g2^{p_{t-1}}
 // #[derive(Encode, Decode, Clone, PartialEq, Eq, RuntimeDebug)]
-// pub struct CommittedPoly {
-
-// }
+// pub struct CommittedPoly {}
 
 // Should be an n-tuple of suitably encoded scalars: enc_1(s_1), ..., enc_{n}(s_n)
 // where s_i = p(i) for a polynomial p(x) of degree t-1
@@ -94,11 +81,14 @@ decl_storage! {
 
 		// round 0
 
+		FinishedRound0: bool;
 		// EncryptionPKs: Vec<Option<EncryptionPubKey>>;
-		EncryptionPKs: Vec<Option<Vec<u8>>>;
+		EncryptionPKs: Vec<Option<EncryptionPublicKey>>;
 
 
 		// round 1
+
+		FinishedRound1: bool;
 		// ith entry is the CommitedPoly of (i+1)th node submitted in a tx in round 1
 		// CommittedPolynomials: Vec<Option<CommittedPoly>>;
 		CommittedPolynomials: Vec<Option<Vec<u8>>>;
@@ -110,6 +100,7 @@ decl_storage! {
 
 		// round 2
 
+		FinishedRound2: bool;
 		// list of n bools: ith is true <=> both the below conditions are satisfied:
 		// 1) (i+1)th node succesfully participated in round 0 and round 1
 		// 2) there was no succesful dispute that proves cheating of (i+1)th node in round 2
@@ -120,55 +111,50 @@ decl_storage! {
 decl_module! {
 	pub struct Module<T: Trait> for enum Call where origin: T::Origin {
 
-		fn on_initialize(now: T::BlockNumber) -> frame_support::weights::Weight {
-			0
+		// TODO: we need to be careful with weights -- for now they are 0, but need to think about them later
+		#[weight = 0]
+		pub fn post_encryption_key(origin, _pk: EncryptionPublicKey) -> DispatchResult {
+			let now = <frame_system::Module<T>>::block_number();
+			let who = ensure_signed(origin)?;
+			debug::native::info!("DKG post_encryption_key call: block_number: {:?} who {:?}", now, who);
+			// logic for receiving round0 tx
+			Ok(())
 		}
 
-		// TODO: we need to be careful with weights -- for now they are 0, but need to think about them later
-	#[weight = 0]
-	pub fn round0(origin, pk: Vec<u8>) -> DispatchResult {
-		let _who = ensure_signed(origin)?;
-		// logic for receiving round0 tx
-		Ok(())
-	}
+		#[weight = 0]
+		pub fn round1(origin, comm_poly: Vec<u8>, shares: Vec<u8>, hash_round0: T::Hash) -> DispatchResult {
+			let _who = ensure_signed(origin)?;
+			// logic for receiving round1 tx
+			Ok(())
+		}
 
-	#[weight = 0]
-	pub fn round1(origin, comm_poly: Vec<u8>, shares: Vec<u8>, hash_round0: T::Hash) -> DispatchResult {
-		let _who = ensure_signed(origin)?;
-		// logic for receiving round1 tx
-		Ok(())
-	}
-
-	#[weight = 0]
-	pub fn round2(origin, disputes: Vec<Vec<u8>>, hash_round1: T::Hash) -> DispatchResult {
-		let _who = ensure_signed(origin)?;
-		// logic for receiving round2 tx
-		Ok(())
-	}
+		#[weight = 0]
+		pub fn round2(origin, disputes: Vec<Vec<u8>>, hash_round1: T::Hash) -> DispatchResult {
+			let _who = ensure_signed(origin)?;
+			// logic for receiving round2 tx
+			Ok(())
+		}
 
 
-	fn offchain_worker(block_number: T::BlockNumber) {
-		debug::native::info!("HELLO WORLD FROM OFFCHAIN WORKERS!");
-		debug::debug!("HELLO WORLD FROM OFFCHAIN WORKERS!");
+		fn offchain_worker(block_number: T::BlockNumber) {
+			debug::native::info!("Hello World from offchain workers!");
 
-//		//implement creating tx for round 0
-//		Self::handle_round0(block_number);
-//
-//
-//		if block_number >= END_ROUND_0.into() {
-//			// implement creating tx for round 1
-//			Self::handle_round1(block_number);
-//		}
-//
-//		if block_number >= END_ROUND_1.into() {
-//			// implement creating tx for round 2
-//			Self::handle_round2(block_number);
-//		}
-//
-//		if block_number >= END_ROUND_2.into() {
-//			// send final master key
-//		}
-	}
+			if block_number < END_ROUND_0.into()  {
+				if !<Self as Store>::FinishedRound0::exists() {
+					Self::handle_round0(block_number);
+				}
+			} else if block_number < END_ROUND_1.into() {
+				// implement creating tx for round 1
+				if !<Self as Store>::FinishedRound0::exists() {
+					Self::handle_round1(block_number);
+				}
+			} else if block_number < END_ROUND_2.into() {
+				// implement creating tx for round 2
+				if !<Self as Store>::FinishedRound0::exists() {
+					Self::handle_round2(block_number);
+				}
+			}
+		}
 	}
 }
 
@@ -189,48 +175,53 @@ impl<T: Trait> Module<T> {
 	}
 
 	fn handle_round0(block_number: T::BlockNumber) {
-		debug::print!("DKG handle_round0 called at block: {:?}", block_number);
+		debug::native::info!("DKG handle_round0 called at block: {:?}", block_number);
 		// TODO: encrypt the key
 		const ALREADY_SET: () = ();
 
 		let val = StorageValueRef::persistent(b"dkw::enc_key");
-		let res = val.mutate(|last_set: Option<Option<[u8; 32]>>| match last_set {
+		let res = val.mutate(|last_set: Option<Option<[u64; 4]>>| match last_set {
 			Some(Some(key)) => {
-				debug::print!("DKG setting the encryption key: {:?}", key);
+				debug::native::info!("DKG error with encryption key already set {:?}", key);
 				Err(ALREADY_SET)
 			}
-			_ => Ok(sp_io::offchain::random_seed()),
+			_ => {
+				let seed = sp_io::offchain::random_seed();
+				let mut scalar_raw = [0u64; 4];
+				for i in 0..4 {
+					scalar_raw[i] = u64::from_le_bytes(
+						seed[8 * i..8 * (i + 1)]
+							.try_into()
+							.expect("slice with incorrect length"),
+					);
+				}
+				debug::native::info!("DKG setting a new encryption key: {:?}", scalar_raw);
+				Ok(scalar_raw)
+			}
 		});
 
-		match res {
-			Ok(Ok(key)) => {
-				// send tx with key
-				debug::print!("DKG setting the encryption key: {:?}", key);
+		if let Ok(Ok(raw_scalar)) = res {
+			// send tx with key
+			debug::native::info!("DKG sending the encryption key for raw: {:?}", raw_scalar);
+			let signer = Signer::<T, T::AuthorityId>::all_accounts();
+			if !signer.can_sign() {
+				// return Err(
+				// 	"No local accounts available. Consider adding one via `author_insertKey` RPC."
+				// )?
 			}
-			Err(ALREADY_SET) => debug::print!("DKG error with encryption key already set"),
-			_ => {}
+			<Self as Store>::FinishedRound0::put(true);
+			let _ = signer.send_signed_transaction(|_account| {
+				let enc_pk = EncryptionPublicKey::from_raw_scalar(raw_scalar);
+				Call::post_encryption_key(enc_pk)
+			});
 		}
-
-		// we should use val.mutate() here to check if enc_key was already set
-		// if so we just ignore this call (means we have generated and sent tx for round 0 in the past)
-		// or we should generate the encryption key sk and store it in the local storage
-		// afterwards we send a signed transaction with the resulting public key (see code below)
-
-		// let _signer = Signer::<T, T::AuthorityId>::all_accounts();
-		// let _ = signer.send_signed_transaction(
-		// 	|_account| {
-		// 		// we should compute pk out of sk
-		// 		// and output Call::round0(pk)
-		// 		//Call::submit_price(price)
-		// 	}
-		// );
 	}
 
 	fn handle_round1(block_number: T::BlockNumber) {
-		debug::print!("DKG handle_round1 called at block: {:?}", block_number);
+		debug::native::info!("DKG handle_round1 called at block: {:?}", block_number);
 	}
 
 	fn handle_round2(block_number: T::BlockNumber) {
-		debug::print!("DKG handle_round2 called at block: {:?}", block_number);
+		debug::native::info!("DKG handle_round2 called at block: {:?}", block_number);
 	}
 }

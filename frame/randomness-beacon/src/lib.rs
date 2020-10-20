@@ -74,17 +74,6 @@ decl_module! {
 			<Self as Store>::DidUpdate::put(true);
 		}
 
-		// this extrinsic is called from within an offchain worker
-		#[weight = 0]
-		fn share_secrets(origin, encoded_secret_shares: Vec<Vec<u8>>, commitments: Vec<Vec<u8>>) {
-			// If there is a share for us decode it and check if it is valid, if not, issue a dispute!
-			// Mark a share for dispute by storing it in InvalidSecretShares store.
-		}
-
-		// this extrinsic is called from within an offchain worker
-		#[weight = 0]
-		fn issue_dispute(origin, decoded_share: Vec<u8>, encoding_key: Vec<u8>, zkp: Vec<u8>) {}
-
 		fn on_finalize(bn: T::BlockNumber) {
 			if bn >= START_BEACON_HEIGHT.into() {
 				assert!(<Self as Store>::DidUpdate::take(), "Randomness must be put into the block");
