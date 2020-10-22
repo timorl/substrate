@@ -4,11 +4,15 @@ use parking_lot::Mutex;
 use sc_client_api::backend;
 use sp_api::{ApiExt, ProvideRuntimeApi};
 use sp_blockchain::HeaderBackend;
+use sp_core::traits::SpawnNamed;
 use sp_randomness_beacon::{inherents::INHERENT_IDENTIFIER, Randomness, START_BEACON_HEIGHT};
 use sp_transaction_pool::TransactionPool;
-use std::{collections::HashMap, sync::mpsc::Receiver, sync::Arc, time};
+use std::{collections::HashMap, pin::Pin, sync::mpsc::Receiver, sync::Arc, time};
 
-use futures::future;
+use futures::{
+	future,
+	future::{Future, FutureExt},
+};
 use sc_block_builder::{BlockBuilderApi, BlockBuilderProvider};
 use sp_consensus::{Proposal, RecordProof};
 use sp_inherents::InherentData;
@@ -30,13 +34,19 @@ pub struct ProposerFactory<A, B, C> {
 
 impl<A, B, C> ProposerFactory<A, B, C> {
 	pub fn new(
+		spawn_handle: impl SpawnNamed + 'static,
 		client: Arc<C>,
 		transaction_pool: Arc<A>,
 		prometheus: Option<&PrometheusRegistry>,
 		randomness_rx: Arc<Mutex<Receiver<Randomness>>>,
 	) -> Self {
 		ProposerFactory {
-			inner: sc_basic_authorship::ProposerFactory::new(client, transaction_pool, prometheus),
+			inner: sc_basic_authorship::ProposerFactory::new(
+				spawn_handle,
+				client,
+				transaction_pool,
+				prometheus,
+			),
 			randomness_rx,
 			available_randomness: Arc::new(Mutex::new(HashMap::new())),
 		}
@@ -103,8 +113,9 @@ where
 		+ BlockBuilderApi<Block, Error = sp_blockchain::Error>,
 {
 	type Transaction = backend::TransactionFor<B, Block>;
-	type Proposal =
-		tokio_executor::blocking::Blocking<Result<Proposal<Block, Self::Transaction>, Self::Error>>;
+	type Proposal = Pin<
+		Box<dyn Future<Output = Result<Proposal<Block, Self::Transaction>, Self::Error>> + Send>,
+	>;
 	type Error = sp_blockchain::Error;
 
 	fn propose(
@@ -114,6 +125,7 @@ where
 		max_duration: time::Duration,
 		record_proof: RecordProof,
 	) -> Self::Proposal {
+		//TODO: inner uses blocking spawn handle, consider using it for waiting for randomness
 		// we leave some time for actually preparing the block
 		let now = time::Instant::now();
 		let deadline = now + max_duration - max_duration / 3;
@@ -158,18 +170,20 @@ where
 					info!("Including randomness in inherent_data.");
 					let result = id.put_data(INHERENT_IDENTIFIER, &bytes);
 					if result.is_err() {
-						return tokio_executor::blocking::run(|| {
+						return async {
 							Err(sp_blockchain::Error::Msg(
 								"error while putting randomness inherent data".to_string(),
 							))
-						});
+						}
+						.boxed();
 					}
 				}
 				None => {
 					info!("Randomness not available in propose. Aborting proposal.");
-					return tokio_executor::blocking::run(|| {
+					return async {
 						Err(sp_blockchain::Error::Msg("no inherent data".to_string()))
-					});
+					}
+					.boxed();
 				}
 			},
 			None => {
@@ -182,21 +196,21 @@ where
 	}
 }
 
-
 #[cfg(test)]
 mod tests {
 	use super::*;
 
 	use parking_lot::Mutex;
-	use sp_consensus::{BlockOrigin, Proposer};
-	use substrate_test_runtime_client::{
-		prelude::*, runtime::{Extrinsic, Transfer},
-	};
-	use sp_transaction_pool::{ChainEvent, MaintainedTransactionPool, TransactionSource};
 	use sc_transaction_pool::BasicPool;
-	use sp_runtime::traits::NumberFor;
-	use sp_runtime::generic::BlockId;
 	use sp_consensus::Environment;
+	use sp_consensus::{BlockOrigin, Proposer};
+	use sp_runtime::generic::BlockId;
+	use sp_runtime::traits::NumberFor;
+	use sp_transaction_pool::{ChainEvent, MaintainedTransactionPool, TransactionSource};
+	use substrate_test_runtime_client::{
+		prelude::*,
+		runtime::{Extrinsic, Transfer},
+	};
 
 	const SOURCE: TransactionSource = TransactionSource::External;
 
@@ -206,11 +220,13 @@ mod tests {
 			nonce,
 			from: AccountKeyring::Alice.into(),
 			to: Default::default(),
-		}.into_signed_tx()
+		}
+		.into_signed_tx()
 	}
 
 	fn chain_event<B: BlockT>(header: B::Header) -> ChainEvent<B>
-		where NumberFor<B>: From<u64>
+	where
+		NumberFor<B>: From<u64>,
 	{
 		ChainEvent::NewBestBlock {
 			hash: header.hash(),
@@ -223,35 +239,44 @@ mod tests {
 		assert!(START_BEACON_HEIGHT >= 2);
 		let client = Arc::new(substrate_test_runtime_client::new());
 		let spawner = sp_core::testing::TaskExecutor::new();
-		let txpool = BasicPool::new_full(
-			Default::default(),
-			None,
-			spawner,
-			client.clone(),
-		);
+		let txpool = BasicPool::new_full(Default::default(), None, spawner.clone(), client.clone());
 
-		futures::executor::block_on(
-			txpool.submit_at(&BlockId::number(0), SOURCE, vec![extrinsic(0), extrinsic(1)])
-		).unwrap();
+		futures::executor::block_on(txpool.submit_at(
+			&BlockId::number(0),
+			SOURCE,
+			vec![extrinsic(0), extrinsic(1)],
+		))
+		.unwrap();
 
 		futures::executor::block_on(
 			txpool.maintain(chain_event(
-				client.header(&BlockId::Number(0u64))
+				client
+					.header(&BlockId::Number(0u64))
 					.expect("header get error")
-					.expect("there should be header")
-			))
+					.expect("there should be header"),
+			)),
 		);
 
 		let (_tx, rx) = std::sync::mpsc::channel();
 		let wrapped_rx = Arc::new(Mutex::new(rx));
-		let mut proposer_factory = ProposerFactory::new(client.clone(), txpool.clone(), None, wrapped_rx);
+		let mut proposer_factory = ProposerFactory::new(
+			spawner.clone(),
+			client.clone(),
+			txpool.clone(),
+			None,
+			wrapped_rx,
+		);
 
-		let proposer_future =proposer_factory.init(&client.header(&BlockId::number(0)).unwrap().unwrap());
+		let proposer_future =
+			proposer_factory.init(&client.header(&BlockId::number(0)).unwrap().unwrap());
 		let proposer = futures::executor::block_on(proposer_future).unwrap();
 		let deadline = time::Duration::from_secs(1);
-		let proposal = futures::executor::block_on(
-			proposer.propose(Default::default(), Default::default(), deadline, RecordProof::No)
-		);
+		let proposal = futures::executor::block_on(proposer.propose(
+			Default::default(),
+			Default::default(),
+			deadline,
+			RecordProof::No,
+		));
 		assert!(proposal.is_ok());
 	}
 
@@ -260,45 +285,58 @@ mod tests {
 		assert_eq!(START_BEACON_HEIGHT, 2);
 		let mut client = Arc::new(substrate_test_runtime_client::new());
 		let spawner = sp_core::testing::TaskExecutor::new();
-		let txpool = BasicPool::new_full(
-			Default::default(),
-			None,
-			spawner,
-			client.clone(),
-		);
+		let txpool = BasicPool::new_full(Default::default(), None, spawner.clone(), client.clone());
 
-		futures::executor::block_on(
-			txpool.submit_at(&BlockId::number(0), SOURCE, vec![extrinsic(0), extrinsic(1)])
-		).unwrap();
+		futures::executor::block_on(txpool.submit_at(
+			&BlockId::number(0),
+			SOURCE,
+			vec![extrinsic(0), extrinsic(1)],
+		))
+		.unwrap();
 
 		futures::executor::block_on(
 			txpool.maintain(chain_event(
-				client.header(&BlockId::Number(0u64))
+				client
+					.header(&BlockId::Number(0u64))
 					.expect("header get error")
-					.expect("there should be header")
-			))
+					.expect("there should be header"),
+			)),
 		);
 
 		let (_tx, rx) = std::sync::mpsc::channel();
 		let wrapped_rx = Arc::new(Mutex::new(rx));
-		let mut proposer_factory = ProposerFactory::new(client.clone(), txpool.clone(), None, wrapped_rx);
+		let mut proposer_factory = ProposerFactory::new(
+			spawner.clone(),
+			client.clone(),
+			txpool.clone(),
+			None,
+			wrapped_rx,
+		);
 
-		let proposer_future =proposer_factory.init(&client.header(&BlockId::number(0)).unwrap().unwrap());
+		let proposer_future =
+			proposer_factory.init(&client.header(&BlockId::number(0)).unwrap().unwrap());
 		let proposer = futures::executor::block_on(proposer_future).unwrap();
 		let deadline = time::Duration::from_secs(1);
-		let proposal = futures::executor::block_on(
-			proposer.propose(Default::default(), Default::default(), deadline, RecordProof::No)
-		);
+		let proposal = futures::executor::block_on(proposer.propose(
+			Default::default(),
+			Default::default(),
+			deadline,
+			RecordProof::No,
+		));
 		assert!(proposal.is_ok());
 		let block = proposal.unwrap().block;
 		client.import(BlockOrigin::Own, block).unwrap();
 
-		let proposer_future =proposer_factory.init(&client.header(&BlockId::number(1)).unwrap().unwrap());
+		let proposer_future =
+			proposer_factory.init(&client.header(&BlockId::number(1)).unwrap().unwrap());
 		let proposer = futures::executor::block_on(proposer_future).unwrap();
 		let deadline = time::Duration::from_secs(1);
-		let proposal = futures::executor::block_on(
-			proposer.propose(Default::default(), Default::default(), deadline, RecordProof::No)
-		);
+		let proposal = futures::executor::block_on(proposer.propose(
+			Default::default(),
+			Default::default(),
+			deadline,
+			RecordProof::No,
+		));
 		assert!(proposal.is_err());
 	}
 
@@ -307,35 +345,44 @@ mod tests {
 		assert_eq!(START_BEACON_HEIGHT, 2);
 		let mut client = Arc::new(substrate_test_runtime_client::new());
 		let spawner = sp_core::testing::TaskExecutor::new();
-		let txpool = BasicPool::new_full(
-			Default::default(),
-			None,
-			spawner,
-			client.clone(),
-		);
+		let txpool = BasicPool::new_full(Default::default(), None, spawner.clone(), client.clone());
 
-		futures::executor::block_on(
-			txpool.submit_at(&BlockId::number(0), SOURCE, vec![extrinsic(0), extrinsic(1)])
-		).unwrap();
+		futures::executor::block_on(txpool.submit_at(
+			&BlockId::number(0),
+			SOURCE,
+			vec![extrinsic(0), extrinsic(1)],
+		))
+		.unwrap();
 
 		futures::executor::block_on(
 			txpool.maintain(chain_event(
-				client.header(&BlockId::Number(0u64))
+				client
+					.header(&BlockId::Number(0u64))
 					.expect("header get error")
-					.expect("there should be header")
-			))
+					.expect("there should be header"),
+			)),
 		);
 
 		let (tx, rx) = std::sync::mpsc::channel();
 		let wrapped_rx = Arc::new(Mutex::new(rx));
-		let mut proposer_factory = ProposerFactory::new(client.clone(), txpool.clone(), None, wrapped_rx);
+		let mut proposer_factory = ProposerFactory::new(
+			spawner.clone(),
+			client.clone(),
+			txpool.clone(),
+			None,
+			wrapped_rx,
+		);
 
-		let proposer_future =proposer_factory.init(&client.header(&BlockId::number(0)).unwrap().unwrap());
+		let proposer_future =
+			proposer_factory.init(&client.header(&BlockId::number(0)).unwrap().unwrap());
 		let proposer = futures::executor::block_on(proposer_future).unwrap();
 		let deadline = time::Duration::from_secs(1);
-		let proposal = futures::executor::block_on(
-			proposer.propose(Default::default(), Default::default(), deadline, RecordProof::No)
-		);
+		let proposal = futures::executor::block_on(proposer.propose(
+			Default::default(),
+			Default::default(),
+			deadline,
+			RecordProof::No,
+		));
 		assert!(proposal.is_ok());
 		let block = proposal.unwrap().block;
 		client.import(BlockOrigin::Own, block).unwrap();
@@ -343,12 +390,16 @@ mod tests {
 		//we send randomness for some default nonce -- certainly not the required one
 		assert!(tx.send(Default::default()).is_ok());
 
-		let proposer_future =proposer_factory.init(&client.header(&BlockId::number(1)).unwrap().unwrap());
+		let proposer_future =
+			proposer_factory.init(&client.header(&BlockId::number(1)).unwrap().unwrap());
 		let proposer = futures::executor::block_on(proposer_future).unwrap();
 		let deadline = time::Duration::from_secs(1);
-		let proposal = futures::executor::block_on(
-			proposer.propose(Default::default(), Default::default(), deadline, RecordProof::No)
-		);
+		let proposal = futures::executor::block_on(proposer.propose(
+			Default::default(),
+			Default::default(),
+			deadline,
+			RecordProof::No,
+		));
 		assert!(proposal.is_err());
 	}
 }

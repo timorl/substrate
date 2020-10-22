@@ -6,7 +6,6 @@ use sc_network_gossip::{
 	GossipEngine, Network, TopicNotification, ValidationResult, Validator, ValidatorContext,
 };
 
-use sp_core::traits::BareCryptoStorePtr;
 use sp_runtime::traits::Block as BlockT;
 
 use sp_randomness_beacon::{KeyBox, Nonce, Randomness, RandomnessVerifier, Share, VerifyKey};
@@ -24,39 +23,6 @@ use std::{
 const RANDOMNESS_BEACON_ID: [u8; 4] = *b"rndb";
 const RB_PROTOCOL_NAME: &'static str = "/randomness_beacon";
 pub const SEND_INTERVAL: time::Duration = time::Duration::from_secs(1);
-
-pub const KEY_TYPE: sp_core::crypto::KeyTypeId = sp_application_crypto::key_types::DUMMY;
-mod app {
-	use sp_application_crypto::{app_crypto, ed25519, key_types::DUMMY};
-	app_crypto!(ed25519, DUMMY);
-}
-
-pub type AuthorityId = app::Public;
-pub type AuthoritySignature = app::Signature;
-
-pub struct LocalIdKeystore((AuthorityId, BareCryptoStorePtr));
-
-impl LocalIdKeystore {
-	fn _local_id(&self) -> &AuthorityId {
-		&(self.0).0
-	}
-
-	fn keystore(&self) -> &BareCryptoStorePtr {
-		&(self.0).1
-	}
-}
-
-impl AsRef<BareCryptoStorePtr> for LocalIdKeystore {
-	fn as_ref(&self) -> &BareCryptoStorePtr {
-		self.keystore()
-	}
-}
-
-impl From<(AuthorityId, BareCryptoStorePtr)> for LocalIdKeystore {
-	fn from(inner: (AuthorityId, BareCryptoStorePtr)) -> LocalIdKeystore {
-		LocalIdKeystore(inner)
-	}
-}
 
 pub mod authorship;
 pub mod import;
@@ -383,12 +349,10 @@ mod tests {
 
 		let network = TestNetwork::default();
 
-		let n_members = 2;
 		let threshold = 2;
 
 		let mut alice_rg = RandomnessGossip::<Block>::new(
 			String::from("Alice"),
-			n_members,
 			threshold,
 			a_notify_nonce_rx,
 			network.clone(),

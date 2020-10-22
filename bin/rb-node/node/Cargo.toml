@@ -32,6 +32,7 @@ sc-service = { version = "0.8.0", path = "../../../client/service", features = [
 sp-inherents = { version = "2.0.0", path = "../../../primitives/inherents" }
 sc-transaction-pool = { version = "2.0.0", path = "../../../client/transaction-pool" }
 sp-transaction-pool = { version = "2.0.0", path = "../../../primitives/transaction-pool" }
+sp-keystore= { version = "0.8.0", path = "../../../primitives/keystore" }
 sc-consensus-aura = { version = "0.8.0", path = "../../../client/consensus/aura" }
 sp-consensus-aura = { version = "0.8.0", path = "../../../primitives/consensus/aura" }
 sp-consensus = { version = "0.8.0", path = "../../../primitives/consensus/common" }

@@ -235,9 +235,6 @@ version = "1.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d373d78ded7d0b3fa8039375718cde0aace493f2e34fb60f51cbf567562ca801"
 dependencies = [
- "async-executor",
- "async-io",
- "async-mutex",
  "async-task",
  "concurrent-queue",
  "fastrand",
@@ -1962,7 +1959,7 @@ dependencies = [
  "futures-core",
  "futures-io",
  "memchr",
- "parking 2.0.0",
+ "parking",
  "pin-project-lite",
  "waker-fn",
 ]
@@ -3695,17 +3692,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "multitask"
-version = "0.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c09c35271e7dcdb5f709779111f2c8e8ab8e06c1b587c1c6a9e179d865aaa5b4"
-dependencies = [
- "async-task",
- "concurrent-queue",
- "fastrand",
-]
-
-[[package]]
 name = "nalgebra"
 version = "0.18.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5393,12 +5379,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "427c3892f9e783d91cc128285287e70a59e206ca452770ece88a76f7a3eddd72"
 
 [[package]]
-name = "parking"
-version = "2.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "427c3892f9e783d91cc128285287e70a59e206ca452770ece88a76f7a3eddd72"
-
-[[package]]
 name = "parking_lot"
 version = "0.7.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6163,6 +6143,7 @@ dependencies = [
  "sp-dkg",
  "sp-finality-grandpa",
  "sp-inherents",
+ "sp-keystore",
  "sp-randomness-beacon",
  "sp-runtime",
  "sp-transaction-pool",
@@ -8679,7 +8660,7 @@ dependencies = [
 name = "sp-runtime-interface-proc-macro"
 version = "2.0.0"
 dependencies = [
- "inflector",
+ "Inflector",
  "proc-macro-crate",
  "proc-macro2",
  "quote",

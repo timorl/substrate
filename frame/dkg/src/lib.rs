@@ -116,7 +116,8 @@ decl_module! {
 		pub fn post_encryption_key(origin, _pk: EncryptionPublicKey) -> DispatchResult {
 			let now = <frame_system::Module<T>>::block_number();
 			let who = ensure_signed(origin)?;
-			debug::native::info!("DKG post_encryption_key call: block_number: {:?} who {:?}", now, who);
+			sp_runtime::print("DKG post_encryption_key");
+			debug::info!("DKG post_encryption_key call: block_number: {:?} who {:?}", now, who);
 			// logic for receiving round0 tx
 			Ok(())
 		}
@@ -137,7 +138,7 @@ decl_module! {
 
 
 		fn offchain_worker(block_number: T::BlockNumber) {
-			debug::native::info!("Hello World from offchain workers!");
+			debug::info!("DKG Hello World from offchain workers!");
 
 			if block_number < END_ROUND_0.into()  {
 				if !<Self as Store>::FinishedRound0::exists() {

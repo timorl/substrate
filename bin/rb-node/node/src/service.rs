@@ -7,12 +7,13 @@ use sc_client_api::{ExecutorProvider, RemoteBackend};
 use sc_executor::native_executor_instance;
 pub use sc_executor::NativeExecutor;
 use sc_finality_grandpa::{
-	FinalityProofProvider as GrandpaFinalityProofProvider, GrandpaBlockImport,
+	FinalityProofProvider as GrandpaFinalityProofProvider, GrandpaBlockImport, SharedVoterState,
 };
 use sc_service::{error::Error as ServiceError, Configuration, TaskManager};
 use sp_consensus_aura::sr25519::AuthorityPair as AuraPair;
 use sp_inherents::InherentDataProviders;
 use std::sync::Arc;
+use std::time::Duration;
 
 use sc_randomness_beacon::{import::RandomnessBeaconBlockImport, RandomnessGossip};
 use sp_randomness_beacon::Nonce;
@@ -51,7 +52,7 @@ pub fn new_partial(
 > {
 	let inherent_data_providers = sp_inherents::InherentDataProviders::new();
 
-	let (client, backend, keystore, task_manager) =
+	let (client, backend, keystore_container, task_manager) =
 		sc_service::new_full_parts::<Block, RuntimeApi, Executor>(&config)?;
 	let client = Arc::new(client);
 
@@ -95,7 +96,7 @@ pub fn new_partial(
 		backend,
 		task_manager,
 		import_queue,
-		keystore,
+		keystore_container,
 		select_chain,
 		transaction_pool,
 		inherent_data_providers,
@@ -111,7 +112,7 @@ pub fn new_full(config: Configuration) -> Result<TaskManager, ServiceError> {
 		mut task_manager,
 		select_chain,
 		import_queue,
-		keystore,
+		keystore_container,
 		transaction_pool,
 		inherent_data_providers,
 		other: (randomness_nonce_rx, block_import, grandpa_link),
@@ -120,10 +121,13 @@ pub fn new_full(config: Configuration) -> Result<TaskManager, ServiceError> {
 
 	// TODO: hack for development: add keys for dkg
 	if let Some(seed) = config.dev_key_seed.clone() {
-		keystore
-			.write()
-			.insert_ephemeral_from_seed_by_type::<sp_dkg::crypto::Pair>(&seed, sp_dkg::KEY_TYPE)
-			.expect("Dev Seed should always succeed.");
+		assert_eq!(sp_dkg::crypto::CRYPTO_ID, sp_core::sr25519::CRYPTO_ID);
+		sp_keystore::SyncCryptoStore::sr25519_generate_new(
+			&*keystore_container.sync_keystore(),
+			sp_dkg::KEY_TYPE,
+			Some(seed.as_str()),
+		)
+		.expect("generating key for offchain_worker");
 	}
 
 	let (network, network_status_sinks, system_rpc_tx, network_starter) =
@@ -174,7 +178,7 @@ pub fn new_full(config: Configuration) -> Result<TaskManager, ServiceError> {
 	sc_service::spawn_tasks(sc_service::SpawnTasksParams {
 		network: network.clone(),
 		client: client.clone(),
-		keystore: keystore.clone(),
+		keystore: keystore_container.sync_keystore(),
 		task_manager: &mut task_manager,
 		transaction_pool: transaction_pool.clone(),
 		telemetry_connection_sinks: telemetry_connection_sinks.clone(),
@@ -196,6 +200,7 @@ pub fn new_full(config: Configuration) -> Result<TaskManager, ServiceError> {
 		let randomness_rx = Arc::new(Mutex::new(randomness_rx));
 
 		let proposer = sc_randomness_beacon::authorship::ProposerFactory::new(
+			task_manager.spawn_handle(),
 			client.clone(),
 			transaction_pool,
 			prometheus_registry.as_ref(),
@@ -214,7 +219,7 @@ pub fn new_full(config: Configuration) -> Result<TaskManager, ServiceError> {
 			network.clone(),
 			inherent_data_providers.clone(),
 			force_authoring,
-			keystore.clone(),
+			keystore_container.sync_keystore(),
 			can_author_with,
 		)?;
 
@@ -239,13 +244,14 @@ pub fn new_full(config: Configuration) -> Result<TaskManager, ServiceError> {
 
 	network_starter.start_network();
 
+	// if the node isn't actively participating in consensus then it doesn't
+	// need a keystore, regardless of which protocol we use below.
 	let keystore = if role.is_authority() {
-		Some(keystore as sp_core::traits::BareCryptoStorePtr)
+		Some(keystore_container.sync_keystore())
 	} else {
 		None
 	};
 
-	use std::time::Duration;
 	let grandpa_config = sc_finality_grandpa::Config {
 		// FIXME #1578 make this available through chainspec
 		gossip_duration: Duration::from_millis(333),
@@ -263,12 +269,10 @@ pub fn new_full(config: Configuration) -> Result<TaskManager, ServiceError> {
 		// and vote data availability than the observer. The observer has not
 		// been tested extensively yet and having most nodes in a network run it
 		// could lead to finality stalls.
-		use sc_finality_grandpa::SharedVoterState;
 		let grandpa_config = sc_finality_grandpa::GrandpaParams {
 			config: grandpa_config,
 			link: grandpa_link,
 			network,
-			inherent_data_providers,
 			telemetry_on_connect: Some(telemetry_connection_sinks.on_connect_stream()),
 			voting_rule: sc_finality_grandpa::VotingRulesBuilder::default().build(),
 			prometheus_registry,
@@ -282,14 +286,15 @@ pub fn new_full(config: Configuration) -> Result<TaskManager, ServiceError> {
 			sc_finality_grandpa::run_grandpa_voter(grandpa_config)?,
 		);
 	} else {
-		sc_finality_grandpa::setup_disabled_grandpa(client, &inherent_data_providers, network)?;
+		sc_finality_grandpa::setup_disabled_grandpa(network)?;
 	}
+
 	Ok(task_manager)
 }
 
 /// Builds a new service for a light client.
 pub fn new_light(config: Configuration) -> Result<TaskManager, ServiceError> {
-	let (client, backend, keystore, mut task_manager, on_demand) =
+	let (client, backend, keystore_container, mut task_manager, on_demand) =
 		sc_service::new_light_parts::<Block, RuntimeApi, Executor>(&config)?;
 
 	let transaction_pool = Arc::new(sc_transaction_pool::BasicPool::new_light(
@@ -357,7 +362,7 @@ pub fn new_light(config: Configuration) -> Result<TaskManager, ServiceError> {
 		telemetry_connection_sinks: sc_service::TelemetryConnectionSinks::default(),
 		config,
 		client,
-		keystore,
+		keystore: keystore_container.sync_keystore(),
 		backend,
 		network,
 		network_status_sinks,

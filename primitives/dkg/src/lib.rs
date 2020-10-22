@@ -12,6 +12,7 @@ pub mod crypto {
 	use super::KEY_TYPE;
 	use sp_runtime::app_crypto::{app_crypto, sr25519};
 	app_crypto!(sr25519, KEY_TYPE);
+	pub use sp_core::sr25519::CRYPTO_ID;
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
