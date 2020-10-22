@@ -1,3 +1,5 @@
+//! The Randomness Beacon runtime api primitives.
+
 #![cfg_attr(not(feature = "std"), no_std)]
 
 pub mod inherents;
@@ -236,6 +238,8 @@ impl From<(Nonce, Vec<u8>)> for Randomness {
 	}
 }
 
+/// A mock for BLS public key. An ed25519 key is used for now.
+/// This will be replaced by actual BLS keys in Milestone 2.
 #[derive(Clone)]
 pub struct RandomnessVerifier {
 	master_key: VerifyKey,
@@ -253,6 +257,7 @@ impl RandomnessVerifier {
 }
 
 #[cfg(any(feature = "full_crypto", feature = "std"))]
+/// A mock for a BLS-based set of threshold keys.
 pub struct KeyBox {
 	id: u64,
 	share_provider: Pair,
@@ -294,6 +299,8 @@ fn lagrange_coef(shares: &Vec<Share>, x: u64) -> Scalar {
 	num * den.invert().unwrap()
 }
 
+/// The implementation mocks BLS threshold keys by using a set of ed25519 keys.
+/// To be replaced in Milestone 2.
 #[cfg(any(feature = "full_crypto", feature = "std"))]
 impl KeyBox {
 	pub fn new(

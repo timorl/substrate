@@ -1,3 +1,10 @@
+//! A wrapper for block import used by Randomness Beacon.
+//! This is used to provide notifications to a Randomness Beacon committee member
+//! that a new block has been created, and thus it should initialize gossip for
+//! randomness shares for this new block. These notifications happen via a channel
+//! which has the transmitting end in block import (here) and the receiving end
+//! in a RandomnessGossip component.
+
 use codec::Encode;
 use futures::channel::mpsc::Sender;
 use log::info;
@@ -12,6 +19,8 @@ use sp_randomness_beacon::Nonce;
 
 use sp_runtime::{generic::BlockId, traits::Block as BlockT};
 use std::{collections::HashMap, marker, sync::Arc};
+
+
 
 #[derive(derive_more::Display, Debug)]
 pub enum Error {
@@ -98,6 +107,9 @@ where
 		self.inner.check_block(block).map_err(Into::into)
 	}
 
+
+	/// Here we send a notification through self.randomness_nonce_tx that a new block
+	/// have been imported.
 	fn import_block(
 		&mut self,
 		block: BlockImportParams<B, Self::Transaction>,

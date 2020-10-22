@@ -1,6 +1,6 @@
-#[cfg(feature = "std")]
-use codec::Decode;
-use codec::Encode;
+//! The Randomness Beacon runtime primitives related to inherents.
+
+use codec::{Decode, Encode};
 use sp_inherents::{InherentIdentifier, IsFatalError};
 pub const INHERENT_IDENTIFIER: InherentIdentifier = *b"randbecn";
 
@@ -14,7 +14,7 @@ pub enum InherentError {
 }
 
 impl InherentError {
-	/// Try to create an instance out of the given identifier and data.
+	/// Tries to create an instance out of the given identifier and data.
 	#[cfg(feature = "std")]
 	pub fn try_from(id: &InherentIdentifier, data: &[u8]) -> Option<Self> {
 		if id == &INHERENT_IDENTIFIER {

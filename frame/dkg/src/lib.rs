@@ -116,8 +116,8 @@ decl_module! {
 		pub fn post_encryption_key(origin, _pk: EncryptionPublicKey) -> DispatchResult {
 			let now = <frame_system::Module<T>>::block_number();
 			let who = ensure_signed(origin)?;
-			sp_runtime::print("DKG post_encryption_key");
-			debug::info!("DKG post_encryption_key call: block_number: {:?} who {:?}", now, who);
+			sp_runtime::print("DKG POST_ENCRYPTION_KEY");
+			debug::info!("DKG POST_ENCRYPTION_KEY CALL: BLOCK_NUMBER: {:?} WHO {:?}", now, who);
 			// logic for receiving round0 tx
 			Ok(())
 		}
@@ -176,16 +176,13 @@ impl<T: Trait> Module<T> {
 	}
 
 	fn handle_round0(block_number: T::BlockNumber) {
-		debug::native::info!("DKG handle_round0 called at block: {:?}", block_number);
+		debug::info!("DKG handle_round0 called at block: {:?}", block_number);
 		// TODO: encrypt the key
 		const ALREADY_SET: () = ();
 
 		let val = StorageValueRef::persistent(b"dkw::enc_key");
 		let res = val.mutate(|last_set: Option<Option<[u64; 4]>>| match last_set {
-			Some(Some(key)) => {
-				debug::native::info!("DKG error with encryption key already set {:?}", key);
-				Err(ALREADY_SET)
-			}
+			Some(Some(_)) => Err(ALREADY_SET),
 			_ => {
 				let seed = sp_io::offchain::random_seed();
 				let mut scalar_raw = [0u64; 4];
@@ -196,16 +193,17 @@ impl<T: Trait> Module<T> {
 							.expect("slice with incorrect length"),
 					);
 				}
-				debug::native::info!("DKG setting a new encryption key: {:?}", scalar_raw);
+				debug::info!("DKG setting a new encryption key: {:?}", scalar_raw);
 				Ok(scalar_raw)
 			}
 		});
 
 		if let Ok(Ok(raw_scalar)) = res {
 			// send tx with key
-			debug::native::info!("DKG sending the encryption key for raw: {:?}", raw_scalar);
+			debug::info!("DKG sending the encryption key for raw: {:?}", raw_scalar);
 			let signer = Signer::<T, T::AuthorityId>::all_accounts();
 			if !signer.can_sign() {
+				debug::info!("DKG ERROR NO KEYS FOR SIGNER!!!");
 				// return Err(
 				// 	"No local accounts available. Consider adding one via `author_insertKey` RPC."
 				// )?
@@ -219,10 +217,10 @@ impl<T: Trait> Module<T> {
 	}
 
 	fn handle_round1(block_number: T::BlockNumber) {
-		debug::native::info!("DKG handle_round1 called at block: {:?}", block_number);
+		debug::info!("DKG handle_round1 called at block: {:?}", block_number);
 	}
 
 	fn handle_round2(block_number: T::BlockNumber) {
-		debug::native::info!("DKG handle_round2 called at block: {:?}", block_number);
+		debug::info!("DKG handle_round2 called at block: {:?}", block_number);
 	}
 }

@@ -69,7 +69,7 @@ mod tests {
 	use super::*;
 
 	#[test]
-	fn encode_decode_signature() {
+	fn encode_decode_encryption_pk() {
 		let raw_scalar = [1, 2, 3, 4];
 		let key = EncryptionPublicKey::from_raw_scalar(raw_scalar);
 
