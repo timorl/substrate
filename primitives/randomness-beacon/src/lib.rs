@@ -1,3 +1,5 @@
+//! The Randomness Beacon runtime api primitives.
+
 #![cfg_attr(not(feature = "std"), no_std)]
 pub mod inherents;
 
@@ -5,6 +7,8 @@ use codec::{Decode, Encode};
 #[cfg(feature = "std")]
 use sp_core::crypto::Pair;
 use sp_std::vec::Vec;
+
+
 
 pub mod app {
 	use sp_application_crypto::{app_crypto, ed25519, key_types::RANDOMNESS_BEACON};
@@ -65,6 +69,8 @@ pub fn generate_verify_key() -> VerifyKey {
 	sp_application_crypto::ed25519::Public::from_raw(MASTER_MATERIAL).into()
 }
 
+/// A mock for BLS public key. An ed25519 key is used for now.
+/// This will be replaced by actual BLS keys in Milestone 2.
 #[derive(Clone)]
 pub struct RandomnessVerifier {
 	master_key: VerifyKey,
@@ -84,6 +90,7 @@ impl RandomnessVerifier {
 	}
 }
 
+/// A mock for a BLS-based set of threshold keys.
 #[cfg(feature = "std")]
 pub struct KeyBox {
 	id: u32,
@@ -106,6 +113,8 @@ impl Clone for KeyBox {
 	}
 }
 
+/// The implementation mocks BLS threshold keys by using a set of ed25519 keys.
+/// To be replaced in Milestone 2.
 #[cfg(feature = "std")]
 impl KeyBox {
 	pub fn new(

@@ -1,3 +1,13 @@
+//! A wrapper for block proposer used by Randomness Beacon.
+//! The block proposing mechanism needs to be synchronized with the Randomness Beacon,
+//! because we must guarantee that randomness is included in every block. (Or perhaps
+//! every k-th block, but that does not change much). This wrapper ensures that
+//! we will always author blocks with randomness included, as during propose() it awaits
+//! until suitable randomness arrives in a channel. It might happen that block proposing
+//! times out for this reason, but this is necessary, as forcing block creation in the
+//! absence of randomness would cause creating an incorrect block, so there is no point
+//! in that.
+
 use codec::Encode;
 use log::info;
 use parking_lot::Mutex;
@@ -18,13 +28,14 @@ use prometheus_endpoint::Registry as PrometheusRegistry;
 
 use super::Nonce;
 
+
 /// Proposer factory.
 pub struct ProposerFactory<A, B, C> {
-	/// Inner propeser
+	/// Inner proposer.
 	inner: sc_basic_authorship::ProposerFactory<A, B, C>,
-	/// Receiver new randomness
+	/// Receiver of new randomness.
 	randomness_rx: Arc<Mutex<Receiver<Randomness>>>,
-	/// Set of available random bytes
+	/// The set of available random bytes.
 	available_randomness: Arc<Mutex<HashMap<Nonce, Randomness>>>,
 }
 
@@ -107,6 +118,10 @@ where
 		tokio_executor::blocking::Blocking<Result<Proposal<Block, Self::Transaction>, Self::Error>>;
 	type Error = sp_blockchain::Error;
 
+	/// The loop inside of propose makes keeps receiving randomness for various blocks.
+	/// At the moment, randomness is ready for the current block, the loop is terminated
+	/// and we proceed with block creation. If a deadline for block proposing is reached,
+	/// the loop is broken as well and block proposal fails.
 	fn propose(
 		self,
 		inherent_data: InherentData,

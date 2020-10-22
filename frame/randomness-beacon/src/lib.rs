@@ -15,6 +15,17 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+//! Randomness Beacon Pallet for providing randomness seeds in blocks with prespecified frequency.
+//! This pallet keeps in its store a randomness verifier that allows to verify whether
+//! a given seed is correct for a particular block or not. Internally, such a verifier
+//! keeps a joint public key for BLS threshold signatures.
+//! In every block of height >= `START_BEACON_HEIGHT` there is an inherent which is
+//! supposed to contain the seed for the current block. Correctness of this seed
+//! is checked using the randomness verifier and the whole block is discarded as incorrect
+//! in case it outputs false.
+//! At the current stage, the randomness seed is kept in the Store as a Vec<u8> Seed.
+//! This is temporary and an appropriate API will be provided in the next milestone.
+
 #![cfg_attr(not(feature = "std"), no_std)]
 
 use codec::{Decode, Encode};
@@ -30,6 +41,8 @@ use sp_randomness_beacon::{
 use sp_runtime::print;
 use sp_std::convert::TryInto;
 use sp_std::{result, vec::Vec};
+
+
 
 pub trait Trait: frame_system::Trait {}
 
@@ -80,6 +93,8 @@ decl_module! {
 	}
 }
 
+
+/// Extracts the randomness seed for the current block from inherent data.
 fn extract_random_bytes(inherent_data: &InherentData) -> Vec<u8> {
 	let randomness: Result<Option<Randomness>, _> = inherent_data.get_data(&INHERENT_IDENTIFIER);
 	assert!(
@@ -100,6 +115,8 @@ impl<T: Trait> ProvideInherent for Module<T> {
 	type Error = InherentError;
 	const INHERENT_IDENTIFIER: InherentIdentifier = INHERENT_IDENTIFIER;
 
+	/// During block creation this produces an inherent containing the randomness seed
+	/// for the current block. This seed is provided to the pallet via inherent data.
 	fn create_inherent(data: &InherentData) -> Option<Self::Call> {
 		let now = <frame_system::Module<T>>::block_number();
 		print((
@@ -112,6 +129,8 @@ impl<T: Trait> ProvideInherent for Module<T> {
 		None
 	}
 
+	/// Checks whether the inherent corresponding to the randomness beacon contains
+	/// a correct randomness seed for the current block.
 	fn check_inherent(call: &Self::Call, _: &InherentData) -> result::Result<(), Self::Error> {
 		let now = <frame_system::Module<T>>::block_number();
 		print((

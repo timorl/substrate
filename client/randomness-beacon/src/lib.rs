@@ -1,3 +1,15 @@
+//! Communication via random gossip for Randomness Beacon.
+//! Implements all the primitives required to generate and broadcast data
+//! necessary for functioning of the randomness beacon. More specifically
+//! it sends and receives random shares for randomness seeds for subsequent
+//! blocks in the blockchain. The main component -- RandomnessGossip
+//! holds a receiving end of a channel at which it receives notifications
+//! from block import that the procedure of randomness creation should be
+//! started for a new block. It also holds a transmitting end of a channel
+//! through which it transmits ready random seeds to the block proposer.
+//! When creating a new block the proposer blocks until the random seed for
+//! arrives through this channel.
+
 use codec::{Decode, Encode};
 use log::info;
 
@@ -20,6 +32,8 @@ use std::{
 	task::{Context, Poll},
 	time,
 };
+
+
 
 const RANDOMNESS_BEACON_ID: [u8; 4] = *b"rndb";
 const RB_PROTOCOL_NAME: &'static str = "/randomness_beacon";
@@ -92,6 +106,12 @@ pub enum Error {
 	Signing(String),
 }
 
+
+
+/// Validator of the messages received via gossip.
+/// It only needs to check that the received data corresponds to a share
+/// for BLS threshold signatures. The appropriate logic for that will be
+/// added in Milestone 2 (when BLS crypto will be incorporated in the code).
 impl<B: BlockT> Validator<B> for GossipValidator {
 	fn validate(
 		&self,
@@ -155,6 +175,7 @@ pub struct RandomnessGossip<B: BlockT> {
 
 impl<B: BlockT> Unpin for RandomnessGossip<B> {}
 
+/// The component used for gossiping and combining shares of randomness.
 impl<B: BlockT> RandomnessGossip<B> {
 	pub fn new<N: Network<B> + Send + Clone + 'static>(
 		id: String,
@@ -258,6 +279,14 @@ impl<B: BlockT> RandomnessGossip<B> {
 impl<B: BlockT> Future for RandomnessGossip<B> {
 	type Output = ();
 
+
+	/// A future is implemented which intertwines receiving new messages
+	/// with periodically sending out outgoing messages. Apart from that
+	/// it checks whether new notifications about blocks are received from
+	/// the channel that goes between block import and this component.
+	/// Each such notification triggers start of a gossip on a new topic,
+	/// thus in particular a new message is being gossip by this node: its
+	/// randomness share for the new topic (i.e. new block).
 	fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
 		match self.gossip_engine.lock().poll_unpin(cx) {
 			Poll::Ready(()) => {
