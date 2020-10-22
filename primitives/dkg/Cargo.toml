@@ -1,0 +1,41 @@
+[package]
+name = "sp-dkg"
+version = "0.1.0"
+authors = ["Damian Straszak <damian.straszak@cardinals.cc, Michal Swietek <michal.swietek@cardinals.cc>"]
+description = "Primitives for Distributed Key Generation."
+edition = "2018"
+license = "Apache 2.0"
+homepage = "https://substrate.dev"
+repository = "https://github.com/Cardinal-Cryptography/substrate/"
+
+
+[package.metadata.docs.rs]
+targets = ["x86_64-unknown-linux-gnu"]
+
+[dependencies]
+bls12_381 = "0.3.1"
+pairing = "0.18"
+
+sha3 = { version = "0.8", default-features = false, optional = true }
+rand = { version = "0.7.3", default-features = false, optional = true }
+codec = { package = "parity-scale-codec", version = "1.3.1", default-features = false, features = ["derive"] }
+sp-std = { version = "2.0.0", default-features = false, path = "../std" }
+sp-core = { version = "2.0.0", default-features = false, path = "../core" }
+sp-runtime = { version = "2.0.0", default-features = false, path = "../../primitives/runtime" }
+
+[dev-dependencies]
+
+[features]
+default = [ "std" ]
+std = [
+	"rand/std",
+	"sha3/std",
+	"codec/std",
+	"sp-core/std",
+	"sp-runtime/std",
+	"sp-std/std",
+]
+
+full_crypto = [
+	"sha3",
+]

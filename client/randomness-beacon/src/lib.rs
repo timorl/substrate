@@ -1,0 +1,414 @@
+use codec::{Decode, Encode};
+use log::info;
+
+use sc_network::PeerId;
+use sc_network_gossip::{
+	GossipEngine, Network, TopicNotification, ValidationResult, Validator, ValidatorContext,
+};
+
+use sp_core::traits::BareCryptoStorePtr;
+use sp_runtime::traits::Block as BlockT;
+
+use sp_randomness_beacon::{KeyBox, Nonce, Randomness, RandomnessVerifier, Share, VerifyKey};
+
+use futures::{channel::mpsc::Receiver, prelude::*};
+use parking_lot::Mutex;
+use std::{
+	collections::HashMap,
+	pin::Pin,
+	sync::{mpsc::Sender, Arc},
+	task::{Context, Poll},
+	time,
+};
+
+const RANDOMNESS_BEACON_ID: [u8; 4] = *b"rndb";
+const RB_PROTOCOL_NAME: &'static str = "/randomness_beacon";
+pub const SEND_INTERVAL: time::Duration = time::Duration::from_secs(1);
+
+pub const KEY_TYPE: sp_core::crypto::KeyTypeId = sp_application_crypto::key_types::DUMMY;
+mod app {
+	use sp_application_crypto::{app_crypto, ed25519, key_types::DUMMY};
+	app_crypto!(ed25519, DUMMY);
+}
+
+pub type AuthorityId = app::Public;
+pub type AuthoritySignature = app::Signature;
+
+pub struct LocalIdKeystore((AuthorityId, BareCryptoStorePtr));
+
+impl LocalIdKeystore {
+	fn _local_id(&self) -> &AuthorityId {
+		&(self.0).0
+	}
+
+	fn keystore(&self) -> &BareCryptoStorePtr {
+		&(self.0).1
+	}
+}
+
+impl AsRef<BareCryptoStorePtr> for LocalIdKeystore {
+	fn as_ref(&self) -> &BareCryptoStorePtr {
+		self.keystore()
+	}
+}
+
+impl From<(AuthorityId, BareCryptoStorePtr)> for LocalIdKeystore {
+	fn from(inner: (AuthorityId, BareCryptoStorePtr)) -> LocalIdKeystore {
+		LocalIdKeystore(inner)
+	}
+}
+
+pub mod authorship;
+pub mod import;
+
+pub type ShareBytes = Vec<u8>;
+
+#[derive(Debug, Clone, Encode, Decode)]
+pub struct Message {
+	pub data: ShareBytes,
+}
+
+#[derive(Debug, Encode, Decode)]
+pub struct GossipMessage {
+	pub nonce: Nonce,
+	pub message: Message,
+}
+
+fn nonce_to_topic<B: BlockT>(nonce: Nonce) -> B::Hash {
+	B::Hash::decode(&mut &*nonce).unwrap()
+}
+
+pub struct GossipValidator {}
+
+impl GossipValidator {
+	pub fn new() -> Self {
+		GossipValidator {}
+	}
+}
+
+#[derive(Debug, Clone)]
+pub enum Error {
+	Network(String),
+	Signing(String),
+}
+
+impl<B: BlockT> Validator<B> for GossipValidator {
+	fn validate(
+		&self,
+		_context: &mut dyn ValidatorContext<B>,
+		_sender: &PeerId,
+		data: &[u8],
+	) -> ValidationResult<B::Hash> {
+		match GossipMessage::decode(&mut data.clone()) {
+			Ok(gm) => {
+				let topic = nonce_to_topic::<B>(gm.nonce);
+				ValidationResult::ProcessAndKeep(topic)
+			}
+			Err(e) => {
+				info!(
+					target: RB_PROTOCOL_NAME,
+					"Error decoding message: {}",
+					e.what()
+				);
+				ValidationResult::Discard
+			}
+		}
+	}
+}
+
+#[derive(Clone)]
+pub struct OutgoingMessage<B: BlockT> {
+	nonce: Nonce,
+	msg: Message,
+	gossip_engine: Arc<Mutex<GossipEngine<B>>>,
+}
+
+impl<B: BlockT> OutgoingMessage<B> {
+	fn send(&self) {
+		let message = GossipMessage {
+			nonce: self.nonce.clone(),
+			message: self.msg.clone(),
+		};
+		let topic = nonce_to_topic::<B>(self.nonce.clone());
+		self.gossip_engine
+			.lock()
+			.gossip_message(topic, message.encode(), true);
+	}
+}
+
+pub struct RandomnessGossip<B: BlockT> {
+	threshold: usize,
+	topics: HashMap<
+		B::Hash,
+		(
+			Receiver<TopicNotification>,
+			OutgoingMessage<B>,
+			futures_timer::Delay,
+			Vec<Share>,
+		),
+	>,
+	keybox: KeyBox,
+	gossip_engine: Arc<Mutex<GossipEngine<B>>>,
+	randomness_nonce_rx: Receiver<Nonce>,
+	randomness_tx: Option<Sender<Randomness>>,
+}
+
+impl<B: BlockT> Unpin for RandomnessGossip<B> {}
+
+impl<B: BlockT> RandomnessGossip<B> {
+	pub fn new<N: Network<B> + Send + Clone + 'static>(
+		id: String,
+		threshold: usize,
+		randomness_nonce_rx: Receiver<Nonce>,
+		network: N,
+		randomness_tx: Option<Sender<Randomness>>,
+	) -> Self {
+		let gossip_engine = Arc::new(Mutex::new(GossipEngine::new(
+			network.clone(),
+			RANDOMNESS_BEACON_ID,
+			RB_PROTOCOL_NAME,
+			Arc::new(GossipValidator::new()),
+		)));
+
+		// Currently, for testing purposes, it only supports Alice and Bob.
+		// This is temporary and will be removed in the 2nd Milestone.
+		let (ap, bp) = sp_randomness_beacon::alice_bob_pairs();
+
+		let verify_keys = vec![ap.verify_key(), bp.verify_key()];
+
+		let (id, share_provider) = if id == "Alice" { (0, ap) } else { (1, bp) };
+		let master_key = RandomnessVerifier::new(VerifyKey::default());
+
+		let keybox = KeyBox::new(
+			id as u64,
+			share_provider,
+			verify_keys,
+			master_key,
+			threshold,
+		);
+
+		RandomnessGossip {
+			threshold,
+			topics: HashMap::new(),
+			keybox,
+			gossip_engine,
+			randomness_nonce_rx,
+			randomness_tx,
+		}
+	}
+
+	fn initialize_nonce(
+		&self,
+		nonce: Nonce,
+	) -> (Receiver<TopicNotification>, OutgoingMessage<B>, Vec<Share>) {
+		let topic = nonce_to_topic::<B>(nonce.clone());
+
+		let incoming = self
+			.gossip_engine
+			.lock()
+			.messages_for(topic)
+			.filter_map(move |notification| {
+				let decoded = GossipMessage::decode(&mut &notification.message[..]);
+				match decoded {
+					Ok(gm) => {
+						// Some filtering may happen here
+						future::ready(Some(gm))
+					}
+					Err(ref e) => {
+						info!(
+							target: RB_PROTOCOL_NAME,
+							"Skipping malformed message {:?}: {}", notification, e
+						);
+						future::ready(None)
+					}
+				}
+			})
+			.into_inner();
+
+		let share = self.keybox.generate_share(&nonce);
+		let msg = Message {
+			data: Encode::encode(&share),
+		};
+
+		let outgoing = OutgoingMessage::<B> {
+			msg,
+			nonce: nonce,
+			gossip_engine: self.gossip_engine.clone(),
+		};
+
+		(incoming, outgoing, vec![share])
+	}
+}
+
+impl<B: BlockT> Future for RandomnessGossip<B> {
+	type Output = ();
+
+	fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
+		match self.gossip_engine.lock().poll_unpin(cx) {
+			Poll::Ready(()) => {
+				return Poll::Ready(info!(
+					target: RB_PROTOCOL_NAME,
+					"RandomnessGossip future finished."
+				))
+			}
+			Poll::Pending => {}
+		};
+		let new_nonce = match self.randomness_nonce_rx.poll_next_unpin(cx) {
+			Poll::Pending => None,
+			Poll::Ready(None) => return Poll::Ready(()),
+			Poll::Ready(new_nonce) => new_nonce,
+		};
+		if new_nonce.is_some() {
+			let new_nonce = new_nonce.unwrap();
+			let topic = nonce_to_topic::<B>(new_nonce.clone());
+			// received new nonce, start collecting signatures for it
+			if !self.topics.contains_key(&topic) {
+				let (incoming, outgoing, shares) = self.initialize_nonce(new_nonce.clone());
+				let periodic_sender = futures_timer::Delay::new(SEND_INTERVAL);
+				self.topics
+					.insert(topic, (incoming, outgoing, periodic_sender, shares));
+			}
+		}
+
+		// TODO: add a mechanism for clearing old topics
+		if self.topics.is_empty() {
+			return Poll::Pending;
+		}
+
+		let randomness_tx = self.randomness_tx.clone();
+		let keybox = self.keybox.clone();
+		let threshold = self.threshold.clone();
+
+		for (_, (incoming, outgoing, periodic_sender, shares)) in self.topics.iter_mut() {
+			while let Poll::Ready(()) = periodic_sender.poll_unpin(cx) {
+				periodic_sender.reset(SEND_INTERVAL);
+				outgoing.send();
+			}
+
+			let poll = incoming.poll_next_unpin(cx);
+			match poll {
+				Poll::Ready(Some(notification)) => {
+					let GossipMessage { message, .. } =
+						GossipMessage::decode(&mut &notification.message[..]).unwrap();
+					let share: Share = Decode::decode(&mut &*message.data).unwrap();
+					if keybox.verify_share(&share) {
+						shares.push(share);
+						// TODO: the following needs an overhaul
+						if shares.len() == threshold {
+							let randomness = keybox.combine_shares(shares);
+
+							// When randomness succesfully combined, notify block proposer
+							if let Some(ref randomness_tx) = randomness_tx {
+								assert!(
+									randomness_tx.send(randomness).is_ok(),
+									"problem with sending new randomness to the block proposer"
+								);
+							}
+						}
+					}
+				}
+				Poll::Ready(None) => info!(
+					target: RB_PROTOCOL_NAME,
+					"poll_next_unpin returned Ready(None) ==> investigate!"
+				),
+				Poll::Pending => {}
+			}
+		}
+
+		if !self.topics.is_empty() {
+			return Poll::Pending;
+		}
+
+		Poll::Ready(())
+	}
+}
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+	use futures::channel::mpsc::channel;
+	use futures::{
+		channel::mpsc::{unbounded, UnboundedSender},
+		executor::block_on,
+		future::poll_fn,
+	};
+	use sc_network::{Event, ReputationChange};
+	use sc_network_gossip::Network;
+	use sp_runtime::ConsensusEngineId;
+	use sp_runtime::{testing::H256, traits::Block as BlockT};
+	use std::borrow::Cow;
+	use std::sync::{Arc, Mutex};
+	use substrate_test_runtime_client::runtime::Block;
+
+	#[derive(Clone, Default)]
+	struct TestNetwork {
+		inner: Arc<Mutex<TestNetworkInner>>,
+	}
+
+	#[derive(Clone, Default)]
+	struct TestNetworkInner {
+		event_senders: Vec<UnboundedSender<Event>>,
+	}
+
+	impl<B: BlockT> Network<B> for TestNetwork {
+		fn event_stream(&self) -> Pin<Box<dyn Stream<Item = Event> + Send>> {
+			let (tx, rx) = unbounded();
+			self.inner.lock().unwrap().event_senders.push(tx);
+
+			Box::pin(rx)
+		}
+
+		fn report_peer(&self, _: PeerId, _: ReputationChange) {}
+
+		fn disconnect_peer(&self, _: PeerId) {
+			unimplemented!();
+		}
+
+		fn write_notification(&self, _: PeerId, _: ConsensusEngineId, _: Vec<u8>) {
+			unimplemented!();
+		}
+
+		fn register_notifications_protocol(&self, _: ConsensusEngineId, _: Cow<'static, str>) {}
+
+		fn announce(&self, _: B::Hash, _: Vec<u8>) {
+			unimplemented!();
+		}
+	}
+
+	#[test]
+	fn starts_messaging_on_nonce_notification() {
+		let (mut a_notify_nonce_tx, a_notify_nonce_rx) = channel(10);
+		let (tx, _a_randomness_rx) = std::sync::mpsc::channel();
+		let a_randomness_tx = Some(tx);
+
+		let network = TestNetwork::default();
+
+		let n_members = 2;
+		let threshold = 2;
+
+		let mut alice_rg = RandomnessGossip::<Block>::new(
+			String::from("Alice"),
+			n_members,
+			threshold,
+			a_notify_nonce_rx,
+			network.clone(),
+			a_randomness_tx,
+		);
+
+		let nonce = H256::default();
+		let enc_nonce = H256::default().encode();
+		assert!(a_notify_nonce_tx.try_send(enc_nonce.clone()).is_ok());
+
+		block_on(poll_fn(|cx| {
+			for _ in 0..50 {
+				let res = alice_rg.poll_unpin(cx);
+				info!("res: {:?}", res);
+				if let Poll::Ready(()) = res {
+					unreachable!("As long as network is alive, RandomnessGossip should go on.");
+				}
+			}
+			Poll::Ready(())
+		}));
+		assert!(alice_rg.topics.contains_key(&nonce));
+	}
+}
