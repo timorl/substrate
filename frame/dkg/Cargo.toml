@@ -13,12 +13,14 @@ repository = "https://github.com/Cardinal-Cryptography/substrate/"
 targets = ["x86_64-unknown-linux-gnu"]
 
 [dependencies]
+serde = { version = "1.0.101", optional = true , features = ["derive"]}
 codec = { package = "parity-scale-codec", version = "1.3.1", default-features = false, features = ["derive"] }
 sp-io = { version = "2.0.0", default-features = false, path = "../../primitives/io" }
 sp-dkg = { version = "0.1.0", default-features = false, path = "../../primitives/dkg" }
 sp-std = { version = "2.0.0", default-features = false, path = "../../primitives/std" }
 sp-core = { version = "2.0.0", default-features = false, path = "../../primitives/core" }
 sp-runtime = { version = "2.0.0", default-features = false, path = "../../primitives/runtime" }
+pallet-session = { version = "2.0.0", default-features = false, path = "../session" }
 sp-randomness-beacon= { version = "0.1.0", default-features = false, path = "../../primitives/randomness-beacon" }
 frame-support = { version = "2.0.0", default-features = false, path = "../support" }
 frame-system = { version = "2.0.0", default-features = false, path = "../system" }
@@ -30,6 +32,7 @@ frame-system = { version = "2.0.0", default-features = false, path = "../system"
 [features]
 default = ["std"]
 std = [
+	"serde",
 	"codec/std",
 	"sp-io/std",
 	"sp-dkg/std",

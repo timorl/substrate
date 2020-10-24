@@ -17,13 +17,12 @@
 
 #![cfg_attr(not(feature = "std"), no_std)]
 
-// use codec::{Decode, Encode};
-use frame_support::{debug, decl_module, decl_storage, dispatch::DispatchResult};
+use frame_support::{debug, decl_module, decl_storage, dispatch::DispatchResult, Parameter};
 use frame_system::{
 	ensure_signed,
 	offchain::{AppCrypto, CreateSignedTransaction, SendSignedTransaction, Signer},
 };
-use sp_runtime::offchain::storage::StorageValueRef;
+use sp_runtime::{offchain::storage::StorageValueRef, traits::Member};
 use sp_std::{convert::TryInto, vec::Vec};
 
 use sp_dkg::EncryptionPublicKey;
@@ -33,25 +32,6 @@ use sp_dkg::EncryptionPublicKey;
 pub const END_ROUND_0: u32 = 5;
 pub const END_ROUND_1: u32 = 10;
 pub const END_ROUND_2: u32 = 15;
-
-pub mod crypto {
-	use sp_runtime::{MultiSignature, MultiSigner};
-
-	pub struct DKGId;
-	impl frame_system::offchain::AppCrypto<MultiSigner, MultiSignature> for DKGId {
-		type RuntimeAppPublic = sp_dkg::crypto::Public;
-		type GenericSignature = sp_core::sr25519::Signature;
-		type GenericPublic = sp_core::sr25519::Public;
-	}
-}
-
-pub trait Trait: CreateSignedTransaction<Call<Self>> {
-	/// The identifier type for an offchain worker.
-	type AuthorityId: AppCrypto<Self::Public, Self::Signature>;
-
-	/// The overarching dispatch call type.
-	type Call: From<Call<Self>>;
-}
 
 // n is the number of nodes in the committee
 // node indices are 1-based: 1, 2, ..., n
@@ -75,6 +55,38 @@ pub trait Trait: CreateSignedTransaction<Call<Self>> {
 // #[derive(Encode, Decode, Clone, PartialEq, Eq, RuntimeDebug)]
 // pub struct DisputeAgainstDealer {
 // }
+
+pub mod crypto {
+	use codec::{Decode, Encode};
+	use sp_runtime::{MultiSignature, MultiSigner};
+
+	//pub type DKGId = sp_dkg::crypto::Public;
+	#[cfg(feature = "std")]
+	use serde::{Deserialize, Serialize};
+	#[cfg_attr(feature = "std", derive(Deserialize, Serialize))]
+	#[derive(Debug, PartialEq, Eq, Clone, Decode, Encode)]
+	pub struct DKGId(sp_dkg::crypto::Public);
+	impl frame_system::offchain::AppCrypto<MultiSigner, MultiSignature> for DKGId {
+		type RuntimeAppPublic = sp_dkg::crypto::Public;
+		type GenericSignature = sp_core::sr25519::Signature;
+		type GenericPublic = sp_core::sr25519::Public;
+	}
+
+	impl From<sp_dkg::crypto::Public> for DKGId {
+		fn from(pk: sp_dkg::crypto::Public) -> Self {
+			DKGId(pk)
+		}
+	}
+}
+
+pub trait Trait: CreateSignedTransaction<Call<Self>> {
+	/// The identifier type for an offchain worker.
+	type AuthorityId: Member + Parameter + AppCrypto<Self::Public, Self::Signature>;
+	//type AuthorityId: Member + Parameter + RuntimeAppPublic + Default;
+
+	/// The overarching dispatch call type.
+	type Call: From<Call<Self>>;
+}
 
 decl_storage! {
 	trait Store for Module<T: Trait> as DKGWorker {
@@ -105,6 +117,13 @@ decl_storage! {
 		// 1) (i+1)th node succesfully participated in round 0 and round 1
 		// 2) there was no succesful dispute that proves cheating of (i+1)th node in round 2
 		IsCorrectDealer: Vec<bool>;
+
+		/// The current authorities
+		pub Authorities get(fn authorities): Vec<T::AuthorityId>;
+	}
+	add_extra_genesis {
+		config(authorities): Vec<T::AuthorityId>;
+		build(|config| Module::<T>::initialize_authorities(&config.authorities))
 	}
 }
 
@@ -116,7 +135,7 @@ decl_module! {
 		pub fn post_encryption_key(origin, _pk: EncryptionPublicKey) -> DispatchResult {
 			let now = <frame_system::Module<T>>::block_number();
 			let who = ensure_signed(origin)?;
-			sp_runtime::print("DKG POST_ENCRYPTION_KEY");
+			debug::info!("DKG AUTHIRITIES post_encryption_key {:?}", Self::authorities());
 			debug::info!("DKG POST_ENCRYPTION_KEY CALL: BLOCK_NUMBER: {:?} WHO {:?}", now, who);
 			// logic for receiving round0 tx
 			Ok(())
@@ -138,6 +157,7 @@ decl_module! {
 
 
 		fn offchain_worker(block_number: T::BlockNumber) {
+			debug::info!("DKG AUTHIRITIES offchain_worker {:?}", Self::authorities());
 			debug::info!("DKG Hello World from offchain workers!");
 
 			if block_number < END_ROUND_0.into()  {
@@ -164,6 +184,20 @@ decl_module! {
 // This greatly helps with error messages, as the ones inside the macro
 // can sometimes be hard to debug.
 impl<T: Trait> Module<T> {
+	fn initialize_authorities(authorities: &[T::AuthorityId]) {
+		if !authorities.is_empty() {
+			debug::info!(
+				"DKG AUTHIRITIES initialize_authorities {:?}",
+				Self::authorities()
+			);
+			assert!(
+				<Authorities<T>>::get().is_empty(),
+				"Authorities are already initialized!"
+			);
+			<Authorities<T>>::put(authorities);
+		}
+	}
+
 	// TODO: add a custom type for id number?
 	fn _my_id() -> u64 {
 		// this should be able to look at our own public key and
@@ -224,3 +258,37 @@ impl<T: Trait> Module<T> {
 		debug::info!("DKG handle_round2 called at block: {:?}", block_number);
 	}
 }
+
+// TODO check if needed
+impl<T: Trait> sp_runtime::BoundToRuntimeAppPublic for Module<T> {
+	type Public =
+		<<T as Trait>::AuthorityId as AppCrypto<T::Public, T::Signature>>::RuntimeAppPublic;
+}
+
+// impl<T: Trait> pallet_session::OneSessionHandler<T::AccountId> for Module<T> {
+// 	type Key = <<T as Trait>::AuthorityId as AppCrypto<T::Public, T::Signature>>::RuntimeAppPublic;
+//
+// 	fn on_genesis_session<'a, I: 'a>(validators: I)
+// 	where
+// 		I: Iterator<Item = (&'a T::AccountId, T::AuthorityId)>,
+// 	{
+// 		let authorities = validators.map(|(_, k)| k).collect::<Vec<_>>();
+// 		Self::initialize_authorities(&authorities);
+// 	}
+//
+// 	fn on_new_session<'a, I: 'a>(changed: bool, validators: I, _queued_validators: I)
+// 	where
+// 		I: Iterator<Item = (&'a T::AccountId, T::AuthorityId)>,
+// 	{
+// 		// instant changes
+// 		if changed {
+// 			let next_authorities = validators.map(|(_, k)| k).collect::<Vec<_>>();
+// 			let last_authorities = <Module<T>>::authorities();
+// 			if next_authorities != last_authorities {
+// 				Self::change_authorities(next_authorities);
+// 			}
+// 		}
+// 	}
+//
+// 	fn on_disabled(_: usize) {}
+// }

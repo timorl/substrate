@@ -90,6 +90,7 @@ pub mod opaque {
 		pub struct SessionKeys {
 			pub aura: Aura,
 			pub grandpa: Grandpa,
+			pub dkg: DKG,
 		}
 	}
 }
@@ -346,7 +347,7 @@ construct_runtime!(
 		TransactionPayment: pallet_transaction_payment::{Module, Storage},
 		Sudo: pallet_sudo::{Module, Call, Config<T>, Storage, Event<T>},
 		RandomnessBeacon: pallet_randomness_beacon::{Module, Call, Storage, Inherent},
-		DKG: pallet_dkg::{Module, Call, Storage},
+		DKG: pallet_dkg::{Module, Call, Config<T>, Storage},
 	}
 );
 

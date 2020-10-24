@@ -119,17 +119,6 @@ pub fn new_full(config: Configuration) -> Result<TaskManager, ServiceError> {
 		..
 	} = new_partial(&config)?;
 
-	// TODO: hack for development: add keys for dkg
-	if let Some(seed) = config.dev_key_seed.clone() {
-		assert_eq!(sp_dkg::crypto::CRYPTO_ID, sp_core::sr25519::CRYPTO_ID);
-		sp_keystore::SyncCryptoStore::sr25519_generate_new(
-			&*keystore_container.sync_keystore(),
-			sp_dkg::KEY_TYPE,
-			Some(seed.as_str()),
-		)
-		.expect("generating key for offchain_worker");
-	}
-
 	let (network, network_status_sinks, system_rpc_tx, network_starter) =
 		sc_service::build_network(sc_service::BuildNetworkParams {
 			config: &config,
