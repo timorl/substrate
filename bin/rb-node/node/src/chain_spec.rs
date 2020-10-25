@@ -166,6 +166,7 @@ fn testnet_genesis(
 				.iter()
 				.map(|x| (x.2.clone().into()))
 				.collect(),
+			threshold: 2,
 		}),
 		pallet_sudo: Some(SudoConfig {
 			// Assign network admin rights.

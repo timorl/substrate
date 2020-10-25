@@ -141,7 +141,6 @@ pub trait Trait: CreateSignedTransaction<Call<Self>> {
 		+ AppCrypto<Self::Public, Self::Signature>
 		+ Ord
 		+ From<Self::Public>;
-	//type AuthorityId: Member + Parameter + RuntimeAppPublic + Default;
 
 	/// The overarching dispatch call type.
 	type Call: From<Call<Self>>;
@@ -179,10 +178,17 @@ decl_storage! {
 
 		/// The current authorities
 		pub Authorities get(fn authorities): Vec<T::AuthorityId>;
+
+		/// The threshold of BLS scheme
+		pub Threshold: u32;
 	}
 	add_extra_genesis {
 		config(authorities): Vec<T::AuthorityId>;
-		build(|config| Module::<T>::initialize_authorities(&config.authorities))
+		config(threshold): u32;
+		build(|config| {
+			Module::<T>::initialize_authorities(&config.authorities);
+			Module::<T>::set_threshold(config.threshold);
+		})
 	}
 }
 
@@ -231,14 +237,10 @@ decl_module! {
 	}
 }
 
-// Most of the functions are moved outside of the `decl_module!` macro.
-//
-// This greatly helps with error messages, as the ones inside the macro
-// can sometimes be hard to debug.
 impl<T: Trait> Module<T> {
 	fn initialize_authorities(authorities: &[T::AuthorityId]) {
 		if !authorities.is_empty() {
-			debug::info!("DKG AUTHIRITIES initialize_authorities {:?}", authorities);
+			debug::info!("DKG GENESIS initialize_authorities {:?}", authorities);
 			assert!(
 				<Authorities<T>>::get().is_empty(),
 				"Authorities are already initialized!"
@@ -249,25 +251,25 @@ impl<T: Trait> Module<T> {
 		}
 	}
 
-	fn _my_id() -> Option<usize> {
-		// TODO: I give up:( I don't know how to use values in authorities
-		// let authorities = Self::authorities().iter().map();
+	fn set_threshold(threshold: u32) {
+		let n_members = Self::authorities().len();
+		assert!(
+			0 < threshold && threshold <= n_members as u32,
+			"Wrong threshold or n_members"
+		);
+		debug::info!(
+			"DKG GENESIS set_threshold {:?} when n_members {:?}",
+			threshold,
+			n_members
+		);
 
-		// let local_keys =
-		// 	<T::AuthorityId as AppCrypto<T::Public, T::Signature>>::RuntimeAppPublic::all();
-		// local_keys
-		// 	.into_iter()
-		// 	.filter_map(|authority| {
-		// 		let generic_public = <T::AuthorityId as AppCrypto<T::Public, T::Signature>>::GenericPublic::from(authority);
-
-		// 		authorities.binary_search(&authority.into()).ok()})
-		// 	.next()
-		None
+		assert!(!Threshold::exists(), "Threshold is already initialized!");
+		Threshold::set(threshold);
 	}
 
 	fn handle_round0(block_number: T::BlockNumber) {
 		debug::info!("DKG handle_round0 called at block: {:?}", block_number);
-		// TODO: encrypt the key
+		// TODO: encrypt the key in the local store?
 		const ALREADY_SET: () = ();
 
 		let val = StorageValueRef::persistent(b"dkw::enc_key");
@@ -289,7 +291,6 @@ impl<T: Trait> Module<T> {
 		});
 
 		if let Ok(Ok(raw_scalar)) = res {
-			// send tx with key
 			let signer = Signer::<T, T::AuthorityId>::all_accounts();
 			if !signer.can_sign() {
 				debug::info!("DKG ERROR NO KEYS FOR SIGNER!!!");
@@ -354,7 +355,6 @@ impl<T: Trait> Module<T> {
 	}
 }
 
-// TODO check if needed
 impl<T: Trait> sp_runtime::BoundToRuntimeAppPublic for Module<T> {
 	type Public = T::AuthorityId;
 }
