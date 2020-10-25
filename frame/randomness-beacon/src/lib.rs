@@ -40,8 +40,6 @@ use sp_randomness_beacon::{
 };
 use sp_std::{result, vec::Vec};
 
-
-
 pub trait Trait: frame_system::Trait {}
 
 decl_storage! {
@@ -52,9 +50,6 @@ decl_storage! {
 		DidUpdate: bool;
 		/// Stores verifier needed to check randomness in blocks
 		RandomnessVerifier get(fn verifier): VerifyKey;
-
-		/// store for invalid keys (issuer, secret_share, already_disputed)
-		InvalidSecretShares: Vec<(u64, Vec<u8>, bool)>;
 	}
 }
 
@@ -94,7 +89,6 @@ decl_module! {
 		}
 	}
 }
-
 
 /// Extracts the randomness seed for the current block from inherent data.
 fn extract_random_bytes(inherent_data: &InherentData) -> Vec<u8> {

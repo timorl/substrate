@@ -22,7 +22,7 @@ use frame_system::{
 	ensure_signed,
 	offchain::{AppCrypto, CreateSignedTransaction, SendSignedTransaction, Signer},
 };
-use sp_runtime::{offchain::storage::StorageValueRef, traits::Member};
+use sp_runtime::{offchain::storage::StorageValueRef, traits::Member, RuntimeAppPublic};
 use sp_std::{convert::TryInto, vec::Vec};
 
 use sp_dkg::EncryptionPublicKey;
@@ -56,6 +56,11 @@ pub const END_ROUND_2: u32 = 15;
 // pub struct DisputeAgainstDealer {
 // }
 
+// TODO the following and the definition of AuthorityId probably needs a refactor. The problem is
+// that the trait CreateSignedTransaction needed by Signer imposes that AuthorityId must extend
+// AppCrypto and on the other hand if we want to use AuthorityId as public keys of validators, i.e.
+// sign messages, determine index in the validator list and simply be their ids, then we need to
+// extend AuthorityId with RuntimeAppPublic as keys in keystore are stored as RuntimeAppPublic.
 pub mod crypto {
 	use codec::{Decode, Encode};
 	use sp_runtime::{MultiSignature, MultiSigner};
@@ -64,7 +69,7 @@ pub mod crypto {
 	#[cfg(feature = "std")]
 	use serde::{Deserialize, Serialize};
 	#[cfg_attr(feature = "std", derive(Deserialize, Serialize))]
-	#[derive(Debug, PartialEq, Eq, Clone, Decode, Encode)]
+	#[derive(Debug, Default, PartialEq, Eq, Clone, PartialOrd, Ord, Decode, Encode)]
 	pub struct DKGId(sp_dkg::crypto::Public);
 	impl frame_system::offchain::AppCrypto<MultiSigner, MultiSignature> for DKGId {
 		type RuntimeAppPublic = sp_dkg::crypto::Public;
@@ -77,30 +82,85 @@ pub mod crypto {
 			DKGId(pk)
 		}
 	}
+
+	impl From<MultiSigner> for DKGId {
+		fn from(pk: MultiSigner) -> Self {
+			match pk {
+				MultiSigner::Sr25519(key) => DKGId(key.into()),
+				_ => DKGId(Default::default()),
+			}
+		}
+	}
+
+	impl Into<sp_dkg::crypto::Public> for DKGId {
+		fn into(self) -> sp_dkg::crypto::Public {
+			self.0
+		}
+	}
+	impl AsRef<[u8]> for DKGId {
+		fn as_ref(&self) -> &[u8] {
+			AsRef::<[u8]>::as_ref(&self.0)
+		}
+	}
+
+	impl sp_runtime::RuntimeAppPublic for DKGId {
+		const ID: sp_runtime::KeyTypeId = sp_runtime::KeyTypeId(*b"dkg!");
+		const CRYPTO_ID: sp_runtime::CryptoTypeId = sp_dkg::crypto::CRYPTO_ID;
+		type Signature = sp_dkg::crypto::Signature;
+
+		fn all() -> sp_std::vec::Vec<Self> {
+			sp_dkg::crypto::Public::all()
+				.into_iter()
+				.map(|p| p.into())
+				.collect()
+		}
+
+		fn generate_pair(seed: Option<sp_std::vec::Vec<u8>>) -> Self {
+			DKGId(sp_dkg::crypto::Public::generate_pair(seed))
+		}
+
+		fn sign<M: AsRef<[u8]>>(&self, msg: &M) -> Option<Self::Signature> {
+			self.0.sign(msg)
+		}
+
+		fn verify<M: AsRef<[u8]>>(&self, msg: &M, signature: &Self::Signature) -> bool {
+			self.0.verify(msg, signature)
+		}
+
+		fn to_raw_vec(&self) -> sp_std::vec::Vec<u8> {
+			self.0.to_raw_vec()
+		}
+	}
 }
 
 pub trait Trait: CreateSignedTransaction<Call<Self>> {
 	/// The identifier type for an offchain worker.
-	type AuthorityId: Member + Parameter + AppCrypto<Self::Public, Self::Signature>;
+	type AuthorityId: Member
+		+ Parameter
+		+ RuntimeAppPublic
+		+ AppCrypto<Self::Public, Self::Signature>
+		+ Ord
+		+ From<Self::Public>;
 	//type AuthorityId: Member + Parameter + RuntimeAppPublic + Default;
 
 	/// The overarching dispatch call type.
 	type Call: From<Call<Self>>;
 }
 
+// An index of the authority on the list of validators.
+pub type AuthIndex = u32;
+
 decl_storage! {
 	trait Store for Module<T: Trait> as DKGWorker {
 
 		// round 0
 
-		FinishedRound0: bool;
 		// EncryptionPKs: Vec<Option<EncryptionPubKey>>;
-		EncryptionPKs: Vec<Option<EncryptionPublicKey>>;
+		EncryptionPKs get(fn encryption_pks): map hasher(twox_64_concat) AuthIndex => EncryptionPublicKey;
 
 
 		// round 1
 
-		FinishedRound1: bool;
 		// ith entry is the CommitedPoly of (i+1)th node submitted in a tx in round 1
 		// CommittedPolynomials: Vec<Option<CommittedPoly>>;
 		CommittedPolynomials: Vec<Option<Vec<u8>>>;
@@ -112,7 +172,6 @@ decl_storage! {
 
 		// round 2
 
-		FinishedRound2: bool;
 		// list of n bools: ith is true <=> both the below conditions are satisfied:
 		// 1) (i+1)th node succesfully participated in round 0 and round 1
 		// 2) there was no succesful dispute that proves cheating of (i+1)th node in round 2
@@ -132,12 +191,12 @@ decl_module! {
 
 		// TODO: we need to be careful with weights -- for now they are 0, but need to think about them later
 		#[weight = 0]
-		pub fn post_encryption_key(origin, _pk: EncryptionPublicKey) -> DispatchResult {
+		pub fn post_encryption_key(origin, pk: EncryptionPublicKey, ix: AuthIndex) -> DispatchResult {
 			let now = <frame_system::Module<T>>::block_number();
-			let who = ensure_signed(origin)?;
-			debug::info!("DKG AUTHIRITIES post_encryption_key {:?}", Self::authorities());
-			debug::info!("DKG POST_ENCRYPTION_KEY CALL: BLOCK_NUMBER: {:?} WHO {:?}", now, who);
-			// logic for receiving round0 tx
+			let _ = ensure_signed(origin)?;
+			debug::info!("DKG POST_ENCRYPTION_KEY CALL: BLOCK_NUMBER: {:?} WHO {:?}", now, ix);
+			EncryptionPKs::insert(ix, pk);
+
 			Ok(())
 		}
 
@@ -157,23 +216,16 @@ decl_module! {
 
 
 		fn offchain_worker(block_number: T::BlockNumber) {
-			debug::info!("DKG AUTHIRITIES offchain_worker {:?}", Self::authorities());
 			debug::info!("DKG Hello World from offchain workers!");
 
 			if block_number < END_ROUND_0.into()  {
-				if !<Self as Store>::FinishedRound0::exists() {
 					Self::handle_round0(block_number);
-				}
 			} else if block_number < END_ROUND_1.into() {
 				// implement creating tx for round 1
-				if !<Self as Store>::FinishedRound0::exists() {
 					Self::handle_round1(block_number);
-				}
 			} else if block_number < END_ROUND_2.into() {
 				// implement creating tx for round 2
-				if !<Self as Store>::FinishedRound0::exists() {
 					Self::handle_round2(block_number);
-				}
 			}
 		}
 	}
@@ -186,27 +238,31 @@ decl_module! {
 impl<T: Trait> Module<T> {
 	fn initialize_authorities(authorities: &[T::AuthorityId]) {
 		if !authorities.is_empty() {
-			debug::info!(
-				"DKG AUTHIRITIES initialize_authorities {:?}",
-				Self::authorities()
-			);
+			debug::info!("DKG AUTHIRITIES initialize_authorities {:?}", authorities);
 			assert!(
 				<Authorities<T>>::get().is_empty(),
 				"Authorities are already initialized!"
 			);
-			<Authorities<T>>::put(authorities);
+			let mut authorities = authorities.to_vec();
+			authorities.sort();
+			<Authorities<T>>::put(&authorities);
 		}
 	}
 
-	// TODO: add a custom type for id number?
-	fn _my_id() -> u64 {
-		// this should be able to look at our own public key and
-		// at the committee members's public keys that are in the pallet
-		// and simply find out our id
-		// It might make sense to then cache this id in our local storage?
-		// Some access to our keys we can get using the line below:
-		// let signer = Signer::<T, T::AuthorityId>::all_accounts();
-		0
+	fn _my_id() -> Option<usize> {
+		// TODO: I give up:( I don't know how to use values in authorities
+		// let authorities = Self::authorities().iter().map();
+
+		// let local_keys =
+		// 	<T::AuthorityId as AppCrypto<T::Public, T::Signature>>::RuntimeAppPublic::all();
+		// local_keys
+		// 	.into_iter()
+		// 	.filter_map(|authority| {
+		// 		let generic_public = <T::AuthorityId as AppCrypto<T::Public, T::Signature>>::GenericPublic::from(authority);
+
+		// 		authorities.binary_search(&authority.into()).ok()})
+		// 	.next()
+		None
 	}
 
 	fn handle_round0(block_number: T::BlockNumber) {
@@ -234,7 +290,6 @@ impl<T: Trait> Module<T> {
 
 		if let Ok(Ok(raw_scalar)) = res {
 			// send tx with key
-			debug::info!("DKG sending the encryption key for raw: {:?}", raw_scalar);
 			let signer = Signer::<T, T::AuthorityId>::all_accounts();
 			if !signer.can_sign() {
 				debug::info!("DKG ERROR NO KEYS FOR SIGNER!!!");
@@ -242,12 +297,52 @@ impl<T: Trait> Module<T> {
 				// 	"No local accounts available. Consider adding one via `author_insertKey` RPC."
 				// )?
 			}
-			<Self as Store>::FinishedRound0::put(true);
-			let _ = signer.send_signed_transaction(|_account| {
-				let enc_pk = EncryptionPublicKey::from_raw_scalar(raw_scalar);
-				Call::post_encryption_key(enc_pk)
+			let enc_pk = EncryptionPublicKey::from_raw_scalar(raw_scalar);
+			let tx_res = signer.send_signed_transaction(|account| {
+				let ix = Self::authority_index(account.public.clone().into());
+				// TODO add signature for ix
+				Call::post_encryption_key(enc_pk.clone(), ix)
 			});
+
+			for (acc, res) in &tx_res {
+				match res {
+					Ok(()) => debug::info!(
+						"DKG sending the encryption key: {:?} by [{:?}]",
+						enc_pk,
+						acc.id,
+					),
+					Err(e) => {
+						debug::error!("DKG [{:?}] Failed to submit transaction: {:?}", acc.id, e)
+					}
+				}
+			}
 		}
+	}
+
+	fn authority_index(account: T::AuthorityId) -> AuthIndex {
+		let authorities = <Authorities<T>>::get();
+
+		authorities
+			.into_iter()
+			.position(|auth| auth == account)
+			.map(|ix| ix as AuthIndex)
+			.unwrap()
+	}
+
+	fn _local_authority_keys() -> impl Iterator<Item = (u32, T::AuthorityId)> {
+		let authorities = <Authorities<T>>::get();
+		let local_keys = T::AuthorityId::all();
+
+		authorities
+			.into_iter()
+			.enumerate()
+			.filter_map(move |(index, authority)| {
+				local_keys
+					.clone()
+					.into_iter()
+					.position(|local_key| authority == local_key)
+					.map(|location| (index as u32, local_keys[location].clone()))
+			})
 	}
 
 	fn handle_round1(block_number: T::BlockNumber) {
@@ -261,34 +356,5 @@ impl<T: Trait> Module<T> {
 
 // TODO check if needed
 impl<T: Trait> sp_runtime::BoundToRuntimeAppPublic for Module<T> {
-	type Public =
-		<<T as Trait>::AuthorityId as AppCrypto<T::Public, T::Signature>>::RuntimeAppPublic;
+	type Public = T::AuthorityId;
 }
-
-// impl<T: Trait> pallet_session::OneSessionHandler<T::AccountId> for Module<T> {
-// 	type Key = <<T as Trait>::AuthorityId as AppCrypto<T::Public, T::Signature>>::RuntimeAppPublic;
-//
-// 	fn on_genesis_session<'a, I: 'a>(validators: I)
-// 	where
-// 		I: Iterator<Item = (&'a T::AccountId, T::AuthorityId)>,
-// 	{
-// 		let authorities = validators.map(|(_, k)| k).collect::<Vec<_>>();
-// 		Self::initialize_authorities(&authorities);
-// 	}
-//
-// 	fn on_new_session<'a, I: 'a>(changed: bool, validators: I, _queued_validators: I)
-// 	where
-// 		I: Iterator<Item = (&'a T::AccountId, T::AuthorityId)>,
-// 	{
-// 		// instant changes
-// 		if changed {
-// 			let next_authorities = validators.map(|(_, k)| k).collect::<Vec<_>>();
-// 			let last_authorities = <Module<T>>::authorities();
-// 			if next_authorities != last_authorities {
-// 				Self::change_authorities(next_authorities);
-// 			}
-// 		}
-// 	}
-//
-// 	fn on_disabled(_: usize) {}
-// }
