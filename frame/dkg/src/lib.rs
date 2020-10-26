@@ -17,7 +17,7 @@
 
 #![cfg_attr(not(feature = "std"), no_std)]
 
-use frame_support::{debug, decl_module, decl_storage, dispatch::DispatchResult, Parameter};
+use frame_support::{debug, decl_module, decl_storage, Parameter};
 use frame_system::{
 	ensure_signed,
 	offchain::{AppCrypto, CreateSignedTransaction, SendSignedTransaction, Signer},
@@ -25,7 +25,7 @@ use frame_system::{
 use sp_runtime::{offchain::storage::StorageValueRef, traits::Member, RuntimeAppPublic};
 use sp_std::{convert::TryInto, vec::Vec};
 
-use sp_dkg::EncryptionPublicKey;
+use sp_dkg::{Commitment, EncryptionPublicKey, Scalar};
 
 // TODO maybe we could control the round boundaries with events?
 // These should be perhaps in some config in the genesis block?
@@ -37,19 +37,6 @@ pub const END_ROUND_2: u32 = 15;
 // node indices are 1-based: 1, 2, ..., n
 // t is the threshold: it is necessary and sufficient to have t shares to combine
 // the degree of the polynomial is thus t-1
-
-// A commitment to a polynomial p(x) := p_0 + p_1 x + ... + p_{t-1} x^{t-1}
-// Should be a t-tuple of elements of G2=<g2>: g2^{p_0}, g2^{p_1}, ..., g2^{p_{t-1}}
-// #[derive(Encode, Decode, Clone, PartialEq, Eq, RuntimeDebug)]
-// pub struct CommittedPoly {}
-
-// Should be an n-tuple of suitably encoded scalars: enc_1(s_1), ..., enc_{n}(s_n)
-// where s_i = p(i) for a polynomial p(x) of degree t-1
-// #[derive(Encode, Decode, Clone, PartialEq, Eq, RuntimeDebug)]
-// pub struct EncShareList {
-// for milestone 2 we do not encrypt
-//shares: Vec<Scalar>,
-// }
 
 // Should be a decrypted share (milestone 2) + along with a proof of descryption (only in milestone 3)
 // #[derive(Encode, Decode, Clone, PartialEq, Eq, RuntimeDebug)]
@@ -147,7 +134,7 @@ pub trait Trait: CreateSignedTransaction<Call<Self>> {
 }
 
 // An index of the authority on the list of validators.
-pub type AuthIndex = u32;
+pub type AuthIndex = u64;
 
 decl_storage! {
 	trait Store for Module<T: Trait> as DKGWorker {
@@ -162,11 +149,11 @@ decl_storage! {
 
 		// ith entry is the CommitedPoly of (i+1)th node submitted in a tx in round 1
 		// CommittedPolynomials: Vec<Option<CommittedPoly>>;
-		CommittedPolynomials: Vec<Option<Vec<u8>>>;
+		CommittedPolynomials get(fn committed_polynomilas): map hasher(twox_64_concat) AuthIndex => Vec<Commitment>;
 
 		// ith entry is the EncShareList of (i+1)th node submitted in a tx in round 1
 		// EncryptedSharesLists: Vec<Option<EncShareList>>;
-		EncryptedSharesLists: Vec<Option<Vec<u8>>>;
+		EncryptedSharesLists get(fn encrypted_shares_lists): map hasher(twox_64_concat) AuthIndex => Vec<Vec<u8>>;
 
 
 		// round 2
@@ -197,29 +184,32 @@ decl_module! {
 
 		// TODO: we need to be careful with weights -- for now they are 0, but need to think about them later
 		#[weight = 0]
-		pub fn post_encryption_key(origin, pk: EncryptionPublicKey, ix: AuthIndex) -> DispatchResult {
+		pub fn post_encryption_key(origin, pk: EncryptionPublicKey, ix: AuthIndex)  {
 			let now = <frame_system::Module<T>>::block_number();
 			let _ = ensure_signed(origin)?;
+			debug::RuntimeLogger::init();
 			debug::info!("DKG POST_ENCRYPTION_KEY CALL: BLOCK_NUMBER: {:?} WHO {:?}", now, ix);
+			// TODO should we block receiving pk after END_ROUND_0?
 			EncryptionPKs::insert(ix, pk);
-
-			Ok(())
 		}
 
 		#[weight = 0]
-		pub fn round1(origin, comm_poly: Vec<u8>, shares: Vec<u8>, hash_round0: T::Hash) -> DispatchResult {
-			let _who = ensure_signed(origin)?;
-			// logic for receiving round1 tx
-			Ok(())
+		pub fn post_secret_shares(origin, shares: Vec<Vec<u8>>, comm_poly: Vec<Commitment>, ix: AuthIndex, hash_round0: T::Hash) {
+			let now = <frame_system::Module<T>>::block_number();
+			let _ = ensure_signed(origin)?;
+			debug::RuntimeLogger::init();
+			debug::info!("DKG POST_SECRET_SHARES CALL: BLOCK_NUMBER: {:?} WHO {:?}", now, ix);
+
+			EncryptedSharesLists::insert(ix, shares);
+			CommittedPolynomials::insert(ix, comm_poly);
+			// TODO save hash_round0
 		}
 
 		#[weight = 0]
-		pub fn round2(origin, disputes: Vec<Vec<u8>>, hash_round1: T::Hash) -> DispatchResult {
+		pub fn round2(origin, disputes: Vec<Vec<u8>>, hash_round1: T::Hash) {
 			let _who = ensure_signed(origin)?;
 			// logic for receiving round2 tx
-			Ok(())
 		}
-
 
 		fn offchain_worker(block_number: T::BlockNumber) {
 			debug::info!("DKG Hello World from offchain workers!");
@@ -276,15 +266,8 @@ impl<T: Trait> Module<T> {
 		let res = val.mutate(|last_set: Option<Option<[u64; 4]>>| match last_set {
 			Some(Some(_)) => Err(ALREADY_SET),
 			_ => {
-				let seed = sp_io::offchain::random_seed();
-				let mut scalar_raw = [0u64; 4];
-				for i in 0..4 {
-					scalar_raw[i] = u64::from_le_bytes(
-						seed[8 * i..8 * (i + 1)]
-							.try_into()
-							.expect("slice with incorrect length"),
-					);
-				}
+				let scalar_raw = gen_raw_scalar();
+
 				debug::info!("DKG setting a new encryption key: {:?}", scalar_raw);
 				Ok(scalar_raw)
 			}
@@ -312,9 +295,11 @@ impl<T: Trait> Module<T> {
 						enc_pk,
 						acc.id,
 					),
-					Err(e) => {
-						debug::error!("DKG [{:?}] Failed to submit transaction: {:?}", acc.id, e)
-					}
+					Err(e) => debug::error!(
+						"DKG [{:?}] Failed to submit transaction with encryption key: {:?}",
+						acc.id,
+						e
+					),
 				}
 			}
 		}
@@ -348,6 +333,94 @@ impl<T: Trait> Module<T> {
 
 	fn handle_round1(block_number: T::BlockNumber) {
 		debug::info!("DKG handle_round1 called at block: {:?}", block_number);
+		const ALREADY_SET: () = ();
+		// TODO we don't generate shares for parties that didn't post their encryption keys. OK?
+
+		// 0. generate secrets
+		let n_members = <Authorities<T>>::get().len() as u64;
+		let threshold = Threshold::get();
+		let val = StorageValueRef::persistent(b"dkw::secret_poly");
+		let res = val.mutate(|last_set: Option<Option<Vec<[u64; 4]>>>| match last_set {
+			Some(Some(_)) => Err(ALREADY_SET),
+			_ => {
+				let poly = gen_poly_coeffs(threshold - 1);
+
+				debug::info!("DKG generating secret polynomial");
+				Ok(poly)
+			}
+		});
+
+		// TODO: meh borrow checker
+		if res.is_err() {
+			return;
+		}
+		let res = res.unwrap();
+		if res.is_err() {
+			return;
+		}
+		let res = res.unwrap();
+		let poly = &res.into_iter().map(|raw| Scalar::from_raw(raw)).collect();
+
+		// 1. generate encryption keys
+		let raw_secret = StorageValueRef::persistent(b"dkw::enc_key")
+			.get()
+			.unwrap()
+			.unwrap();
+		let secret = Scalar::from_raw(raw_secret);
+		let mut encryption_keys = Vec::new();
+		for i in 0..n_members {
+			if EncryptionPKs::contains_key(i) {
+				let enc_pk = Self::encryption_pks(i);
+				encryption_keys.push(Some(enc_pk.to_encryption_key(secret)));
+			} else {
+				encryption_keys.push(None);
+			}
+		}
+
+		// 2. generate secret shares
+		let mut enc_shares = Vec::new();
+
+		for id in 0..n_members {
+			if let Some(ref enc_key) = encryption_keys[id as usize] {
+				let x = &Scalar::from_raw([id + 1, 0, 0, 0]);
+				let share = poly_eval(poly, x);
+				let share_data = share.to_bytes().to_vec();
+				enc_shares.push(enc_key.encrypt(&share_data));
+			}
+		}
+
+		// 3. generate commitments
+		let mut comms = Vec::new();
+		for id in 0..threshold {
+			comms.push(Commitment::new(poly[id as usize]));
+		}
+
+		// 4. send encrypted secret shares
+		let round0_number: T::BlockNumber = END_ROUND_0.into();
+		let hash_round0 = <frame_system::Module<T>>::block_hash(round0_number);
+		let signer = Signer::<T, T::AuthorityId>::all_accounts();
+		if !signer.can_sign() {
+			debug::info!("DKG ERROR NO KEYS FOR SIGNER!!!");
+			// return Err(
+			// 	"No local accounts available. Consider adding one via `author_insertKey` RPC."
+			// )?
+		}
+		let tx_res = signer.send_signed_transaction(|account| {
+			let ix = Self::authority_index(account.public.clone().into());
+			// TODO add signature for ix
+			Call::post_secret_shares(enc_shares.clone(), comms.clone(), ix, hash_round0)
+		});
+
+		for (acc, res) in &tx_res {
+			match res {
+				Ok(()) => debug::info!("DKG sending the secret shares by [{:?}]", acc.id,),
+				Err(e) => debug::error!(
+					"DKG [{:?}] Failed to submit transaction with secret shares: {:?}",
+					acc.id,
+					e
+				),
+			}
+		}
 	}
 
 	fn handle_round2(block_number: T::BlockNumber) {
@@ -357,4 +430,36 @@ impl<T: Trait> Module<T> {
 
 impl<T: Trait> sp_runtime::BoundToRuntimeAppPublic for Module<T> {
 	type Public = T::AuthorityId;
+}
+
+fn gen_raw_scalar() -> [u64; 4] {
+	let seed = sp_io::offchain::random_seed();
+	let mut scalar_raw = [0u64; 4];
+	for i in 0..4 {
+		scalar_raw[i] = u64::from_le_bytes(
+			seed[8 * i..8 * (i + 1)]
+				.try_into()
+				.expect("slice with incorrect length"),
+		);
+	}
+	scalar_raw
+}
+
+fn gen_poly_coeffs(deg: u32) -> Vec<[u64; 4]> {
+	let mut coeffs = Vec::new();
+	for _ in 0..deg + 1 {
+		coeffs.push(gen_raw_scalar());
+	}
+
+	coeffs
+}
+
+fn poly_eval(coeffs: &Vec<Scalar>, x: &Scalar) -> Scalar {
+	let mut eval = Scalar::zero();
+	for coeff in coeffs.iter() {
+		eval *= x;
+		eval += coeff;
+	}
+
+	eval
 }
