@@ -90,8 +90,8 @@ impl EncryptionKey {
 		msg.clone()
 	}
 
-	pub fn decrypt(&self, msg: &Vec<u8>) -> Vec<u8> {
-		msg.clone()
+	pub fn decrypt(&self, msg: &Vec<u8>) -> Option<Vec<u8>> {
+		Some(msg.clone())
 	}
 }
 
@@ -145,7 +145,8 @@ mod tests {
 
 		let msg = b"top secret msg".to_vec();
 		let decrypted = key.decrypt(&key.encrypt(&msg));
-		assert_eq!(decrypted, msg);
+		assert!(decrypted.is_some());
+		assert_eq!(decrypted.unwrap(), msg);
 	}
 
 	#[test]

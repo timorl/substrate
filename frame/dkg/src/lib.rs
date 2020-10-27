@@ -32,6 +32,9 @@ use sp_dkg::{Commitment, EncryptionPublicKey, Scalar};
 pub const END_ROUND_0: u32 = 5;
 pub const END_ROUND_1: u32 = 10;
 pub const END_ROUND_2: u32 = 15;
+pub const END_ROUND_3: u32 = 15;
+
+// TODO do we add protection against biasing
 
 // n is the number of nodes in the committee
 // node indices are 1-based: 1, 2, ..., n
@@ -79,11 +82,18 @@ pub mod crypto {
 		}
 	}
 
+	impl Into<MultiSigner> for DKGId {
+		fn into(self) -> MultiSigner {
+			MultiSigner::Sr25519(self.0.into())
+		}
+	}
+
 	impl Into<sp_dkg::crypto::Public> for DKGId {
 		fn into(self) -> sp_dkg::crypto::Public {
 			self.0
 		}
 	}
+
 	impl AsRef<[u8]> for DKGId {
 		fn as_ref(&self) -> &[u8] {
 			AsRef::<[u8]>::as_ref(&self.0)
@@ -127,7 +137,8 @@ pub trait Trait: CreateSignedTransaction<Call<Self>> {
 		+ RuntimeAppPublic
 		+ AppCrypto<Self::Public, Self::Signature>
 		+ Ord
-		+ From<Self::Public>;
+		+ From<Self::Public>
+		+ Into<Self::Public>;
 
 	/// The overarching dispatch call type.
 	type Call: From<Call<Self>>;
@@ -158,6 +169,9 @@ decl_storage! {
 
 		// round 2
 
+		// ith entry is a list of disputes against dealers raised by node i submitted in round 2
+		DisputesAgainstDealer get(fn disputes_against_dealer): map hasher(twox_64_concat) AuthIndex => Vec<AuthIndex>;
+
 		// list of n bools: ith is true <=> both the below conditions are satisfied:
 		// 1) (i+1)th node succesfully participated in round 0 and round 1
 		// 2) there was no succesful dispute that proves cheating of (i+1)th node in round 2
@@ -185,16 +199,17 @@ decl_module! {
 		// TODO: we need to be careful with weights -- for now they are 0, but need to think about them later
 		#[weight = 0]
 		pub fn post_encryption_key(origin, pk: EncryptionPublicKey, ix: AuthIndex)  {
+			// TODO should we block receiving pk after END_ROUND_0?
 			let now = <frame_system::Module<T>>::block_number();
 			let _ = ensure_signed(origin)?;
 			debug::RuntimeLogger::init();
 			debug::info!("DKG POST_ENCRYPTION_KEY CALL: BLOCK_NUMBER: {:?} WHO {:?}", now, ix);
-			// TODO should we block receiving pk after END_ROUND_0?
 			EncryptionPKs::insert(ix, pk);
 		}
 
 		#[weight = 0]
 		pub fn post_secret_shares(origin, shares: Vec<Vec<u8>>, comm_poly: Vec<Commitment>, ix: AuthIndex, hash_round0: T::Hash) {
+			// TODO should we block receiving shares after END_ROUND_1?
 			let now = <frame_system::Module<T>>::block_number();
 			debug::RuntimeLogger::init();
 			debug::info!("DKG POST_SECRET_SHARES CALL: BLOCK_NUMBER: {:?} WHO {:?}", now, ix);
@@ -211,9 +226,19 @@ decl_module! {
 		}
 
 		#[weight = 0]
-		pub fn round2(origin, disputes: Vec<Vec<u8>>, hash_round1: T::Hash) {
-			let _who = ensure_signed(origin)?;
-			// logic for receiving round2 tx
+		pub fn post_disputes(origin, disputes: Vec<AuthIndex>, ix: AuthIndex, hash_round1: T::Hash) {
+			let now = <frame_system::Module<T>>::block_number();
+			debug::RuntimeLogger::init();
+			debug::info!("DKG POST_DISPUTES CALL: BLOCK_NUMBER: {:?} WHO {:?}", now, ix);
+			let _ = ensure_signed(origin)?;
+			let round1_number: T::BlockNumber = END_ROUND_1.into();
+			let correct_hash_round1 = <frame_system::Module<T>>::block_hash(round1_number);
+			if hash_round1 != correct_hash_round1 {
+				debug::info!("DKG POST_DISPUTES CALL: received disputes for wrong hash_round1:
+					{:?} instead of {:?} from {:?}",hash_round1, correct_hash_round1, ix);
+			} else {
+				DisputesAgainstDealer::insert(ix, disputes);
+			}
 		}
 
 		fn offchain_worker(block_number: T::BlockNumber) {
@@ -227,11 +252,17 @@ decl_module! {
 			} else if block_number < END_ROUND_2.into() {
 				// implement creating tx for round 2
 					Self::handle_round2(block_number);
+			}else if block_number < END_ROUND_3.into() {
+				// implement creating tx for round 3
+					Self::handle_round3(block_number);
 			}
 		}
 	}
 }
 
+// In round 0 we use persistent storage as we want to generate only one encryption key
+// In subsecuent rounds we use local storage as the objects in subsecuent rounds may differ due to
+// forks.
 impl<T: Trait> Module<T> {
 	fn initialize_authorities(authorities: &[T::AuthorityId]) {
 		if !authorities.is_empty() {
@@ -320,7 +351,7 @@ impl<T: Trait> Module<T> {
 			.unwrap()
 	}
 
-	fn _local_authority_keys() -> impl Iterator<Item = (u32, T::AuthorityId)> {
+	fn local_authority_keys() -> impl Iterator<Item = (AuthIndex, T::AuthorityId)> {
 		let authorities = <Authorities<T>>::get();
 		let local_keys = T::AuthorityId::all();
 
@@ -332,7 +363,7 @@ impl<T: Trait> Module<T> {
 					.clone()
 					.into_iter()
 					.position(|local_key| authority == local_key)
-					.map(|location| (index as u32, local_keys[location].clone()))
+					.map(|location| (index as u64, local_keys[location].clone()))
 			})
 	}
 
@@ -344,7 +375,7 @@ impl<T: Trait> Module<T> {
 		// 0. generate secrets
 		let n_members = <Authorities<T>>::get().len() as u64;
 		let threshold = Threshold::get();
-		let val = StorageValueRef::persistent(b"dkw::secret_poly");
+		let val = StorageValueRef::local(b"dkw::secret_poly");
 		let res = val.mutate(|last_set: Option<Option<Vec<[u64; 4]>>>| match last_set {
 			Some(Some(_)) => Err(ALREADY_SET),
 			_ => {
@@ -429,7 +460,136 @@ impl<T: Trait> Module<T> {
 	}
 
 	fn handle_round2(block_number: T::BlockNumber) {
+		const ALREADY_SET: () = ();
 		debug::info!("DKG handle_round2 called at block: {:?}", block_number);
+		let val = StorageValueRef::local(b"dkw::secret_shares");
+		let res = val.mutate(
+			|last_set: Option<Option<Vec<(AuthIndex, Vec<[u64; 4]>)>>>| match last_set {
+				Some(Some(_)) => Err(ALREADY_SET),
+				_ => Ok(Vec::new()),
+			},
+		);
+
+		if res.is_err() && res.unwrap().is_err() {
+			debug::info!("DKG handle_round2 error in retrieving list of raised disputes");
+			return;
+		}
+
+		let n_members = <Authorities<T>>::get().len() as u64;
+
+		// 0. generate encryption keys
+		let raw_secret = StorageValueRef::persistent(b"dkw::enc_key")
+			.get()
+			.unwrap()
+			.unwrap();
+		let secret = Scalar::from_raw(raw_secret);
+		let mut encryption_keys = Vec::new();
+		for i in 0..n_members {
+			if EncryptionPKs::contains_key(i) {
+				let enc_pk = Self::encryption_pks(i);
+				encryption_keys.push(Some(enc_pk.to_encryption_key(secret)));
+			} else {
+				encryption_keys.push(None);
+			}
+		}
+
+		// 1. decrypt shares, check commitments
+		let mut all_shares = Vec::<(AuthIndex, Vec<[u64; 4]>)>::new();
+		let mut all_disputes = Vec::new();
+		for (my_ix, auth) in Self::local_authority_keys() {
+			debug::info!("DKG handle_round2 for authority: {:?}: {:?}", my_ix, auth);
+
+			let mut shares: Vec<[u64; 4]> = Vec::new();
+			let mut disputes = Vec::new();
+
+			for creator in 0..n_members {
+				let ek = &encryption_keys[creator as usize];
+				if ek.is_none() || !EncryptedSharesLists::contains_key(creator) {
+					// TODO no one have seen shares from this creator, we just skip it
+					continue;
+				}
+				// TODO add commitment verification
+				let _commitment = &CommittedPolynomials::get(creator)[my_ix as usize];
+				let encrypted_share = &EncryptedSharesLists::get(creator)[my_ix as usize];
+				let share = ek.as_ref().unwrap().decrypt(&encrypted_share);
+				if share.is_none() {
+					// TODO add proper proof and commitment verification
+					disputes.push(creator);
+				} else {
+					let bytes: [u8; 32] = share.unwrap()[..]
+						.try_into()
+						.expect("slice with incorrect length");
+					let share_data = u8_to_u64(bytes);
+					shares.push(share_data);
+				}
+			}
+
+			all_shares.push((my_ix, shares));
+			all_disputes.push((my_ix, disputes));
+		}
+
+		// 2. save shares
+		let res: Result<_, ()> = val.mutate(|_| Ok(all_shares));
+
+		if res.is_err() && res.unwrap().is_err() {
+			debug::info!("DKG handle_round2 error in retrieving list of raised disputes");
+			return;
+		}
+
+		// 3. send disputes
+		let round1_number: T::BlockNumber = END_ROUND_1.into();
+		let hash_round1 = <frame_system::Module<T>>::block_hash(round1_number);
+
+		for (my_ix, disputes) in all_disputes.into_iter() {
+			let my_account = Self::authorities()[my_ix as usize].clone();
+			let signer = Signer::<T, T::AuthorityId>::all_accounts()
+				.with_filter([my_account.into()].to_vec());
+			if !signer.can_sign() {
+				debug::info!("DKG ERROR NO KEYS FOR SIGNER {:?}!!!", my_ix,);
+			}
+
+			let tx_res = signer.send_signed_transaction(|_| {
+				// TODO add signature for ix
+				Call::post_disputes(disputes.clone(), my_ix, hash_round1)
+			});
+
+			for (acc, res) in &tx_res {
+				match res {
+					Ok(()) => debug::info!("DKG sending the disputes by [{:?}]", acc.id,),
+					Err(e) => debug::error!(
+						"DKG [{:?}] Failed to submit transaction with disputes: {:?}",
+						acc.id,
+						e
+					),
+				}
+			}
+		}
+	}
+
+	fn handle_round3(block_number: T::BlockNumber) {
+		const ALREADY_SET: () = ();
+		debug::info!("DKG handle_round3 called at block: {:?}", block_number);
+		let val = StorageValueRef::persistent(b"dkw::master_key");
+		let res = val.mutate(|last_set: Option<Option<bool>>| match last_set {
+			Some(Some(_)) => Err(ALREADY_SET),
+			_ => {
+				debug::info!("DKG generating master_key");
+				Ok(true)
+			}
+		});
+
+		if res.is_err() || res.unwrap().is_err() {
+			return;
+		}
+
+		let n_members = <Authorities<T>>::get().len() as u64;
+		let _threshold = Threshold::get();
+
+		// 1. determine the set of share providers
+		let mut share_providers = Vec::new();
+		for i in 0..n_members {
+			share_providers.push(i);
+		}
 	}
 }
 
@@ -437,17 +597,20 @@ impl<T: Trait> sp_runtime::BoundToRuntimeAppPublic for Module<T> {
 	type Public = T::AuthorityId;
 }
 
-fn gen_raw_scalar() -> [u64; 4] {
-	let seed = sp_io::offchain::random_seed();
-	let mut scalar_raw = [0u64; 4];
+fn u8_to_u64(bytes: [u8; 32]) -> [u64; 4] {
+	let mut out = [0u64; 4];
 	for i in 0..4 {
-		scalar_raw[i] = u64::from_le_bytes(
-			seed[8 * i..8 * (i + 1)]
+		out[i] = u64::from_le_bytes(
+			bytes[8 * i..8 * (i + 1)]
 				.try_into()
 				.expect("slice with incorrect length"),
 		);
 	}
-	scalar_raw
+	out
+}
+
+fn gen_raw_scalar() -> [u64; 4] {
+	u8_to_u64(sp_io::offchain::random_seed())
 }
 
 fn gen_poly_coeffs(deg: u32) -> Vec<[u64; 4]> {
