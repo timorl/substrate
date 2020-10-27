@@ -196,13 +196,18 @@ decl_module! {
 		#[weight = 0]
 		pub fn post_secret_shares(origin, shares: Vec<Vec<u8>>, comm_poly: Vec<Commitment>, ix: AuthIndex, hash_round0: T::Hash) {
 			let now = <frame_system::Module<T>>::block_number();
-			let _ = ensure_signed(origin)?;
 			debug::RuntimeLogger::init();
 			debug::info!("DKG POST_SECRET_SHARES CALL: BLOCK_NUMBER: {:?} WHO {:?}", now, ix);
-
-			EncryptedSharesLists::insert(ix, shares);
-			CommittedPolynomials::insert(ix, comm_poly);
-			// TODO save hash_round0
+			let _ = ensure_signed(origin)?;
+			let round0_number: T::BlockNumber = END_ROUND_0.into();
+			let correct_hash_round0 = <frame_system::Module<T>>::block_hash(round0_number);
+			if hash_round0 != correct_hash_round0 {
+				debug::info!("DKG POST_SECRET_SHARES CALL: received secret shares for wrong hash_round0:
+					{:?} instead of {:?} from {:?}",hash_round0, correct_hash_round0, ix);
+			} else {
+				EncryptedSharesLists::insert(ix, shares);
+				CommittedPolynomials::insert(ix, comm_poly);
+			}
 		}
 
 		#[weight = 0]
