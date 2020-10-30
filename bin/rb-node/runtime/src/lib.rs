@@ -18,7 +18,7 @@ use sp_runtime::traits::{
 };
 use sp_runtime::{
 	create_runtime_str, generic, impl_opaque_keys, traits,
-	transaction_validity::{TransactionSource, TransactionValidity},
+	transaction_validity::{TransactionPriority, TransactionSource, TransactionValidity},
 	ApplyExtrinsicResult, MultiSignature, SaturatedConversion,
 };
 use sp_std::prelude::*;
@@ -267,9 +267,14 @@ impl pallet_sudo::Trait for Runtime {
 
 impl pallet_randomness_beacon::Trait for Runtime {}
 
+parameter_types! {
+	pub const ImOnlineUnsignedPriority: TransactionPriority = TransactionPriority::max_value();
+}
+
 impl pallet_dkg::Trait for Runtime {
 	type Call = Call;
 	type AuthorityId = pallet_dkg::crypto::DKGId;
+	type UnsignedPriority = ImOnlineUnsignedPriority;
 }
 
 impl<LocalCall> frame_system::offchain::CreateSignedTransaction<LocalCall> for Runtime
@@ -347,7 +352,7 @@ construct_runtime!(
 		TransactionPayment: pallet_transaction_payment::{Module, Storage},
 		Sudo: pallet_sudo::{Module, Call, Config<T>, Storage, Event<T>},
 		RandomnessBeacon: pallet_randomness_beacon::{Module, Call, Storage, Inherent},
-		DKG: pallet_dkg::{Module, Call, Config<T>, Storage},
+		DKG: pallet_dkg::{Module, Call, Config<T>, Storage, ValidateUnsigned},
 	}
 );
 
