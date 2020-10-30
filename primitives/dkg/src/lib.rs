@@ -37,7 +37,7 @@ impl EncryptionPublicKey {
 		EncryptionPublicKey { g1point, g2point }
 	}
 
-	pub fn to_encryption_key(self, secret: Scalar) -> EncryptionKey {
+	pub fn to_encryption_key(&self, secret: Scalar) -> EncryptionKey {
 		let g1point = G1Affine::from(self.g1point * secret);
 		let g2point = G2Affine::from(self.g2point * secret);
 
