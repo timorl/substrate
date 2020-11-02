@@ -8441,6 +8441,7 @@ dependencies = [
  "rand 0.7.3",
  "sha3",
  "sp-core",
+ "sp-randomness-beacon",
  "sp-runtime",
  "sp-std",
 ]

@@ -29,7 +29,7 @@ use sp_runtime::{
 };
 use sp_std::{convert::TryInto, vec::Vec};
 
-use sp_dkg::{Commitment, EncryptionKey, EncryptionPublicKey, Scalar};
+use sp_dkg::{Commitment, EncryptionKey, EncryptionPublicKey, Scalar, VerifyKey};
 
 // TODO handle the situation when the node is not an authority
 
@@ -178,6 +178,10 @@ decl_storage! {
 		IsCorrectDealer get(fn is_correct_dealer): Vec<bool>;
 
 
+		// round 3
+		MasterVerificationKey: VerifyKey;
+
+
 		/// The current authorities
 		pub Authorities get(fn authorities): Vec<T::AuthorityId>;
 
@@ -273,7 +277,7 @@ decl_module! {
 						(true, true) => { debug::info!(
 							"DKG POST_DISPUTES CALL: BLOCK_NUMBER: {:?} WHO {:?} disputes {:?}",
 							now, ix, disputes);
-							DisputesAgainstDealer::mutate(|ref mut values| values[ix as usize] = disputes);
+							DisputesAgainstDealer::mutate(|ref mut values| values[ix as usize] = disputes.clone());
 							// TODO verify disputes
 							IsCorrectDealer::mutate(|ref mut values|
 								disputes.iter().for_each(|ix| values[*ix as usize] = false)
@@ -283,6 +287,24 @@ decl_module! {
 				}
 				None =>  debug::info!("DKG POST_DISPUTES FAILED FIND AUTH"),
 			}
+		}
+
+		// TODO maybe it should be an event?
+		#[weight = 0]
+		pub fn post_master_verification_key(origin, mvk: VerifyKey, hash_round2: T::Hash) {
+			debug::RuntimeLogger::init();
+
+			let now = <frame_system::Module<T>>::block_number();
+			let who = ensure_signed(origin)?;
+
+			match Self::authority_index(who){
+				Some(ix) => {
+					debug::info!("DKG POST_MASTER_KEY FROM: {:?} block {:?}", ix, now);
+					MasterVerificationKey::put(mvk);
+				}
+				None =>  debug::info!("DKG POST_MASTER_KEY FAILED FIND AUTH"),
+			}
+
 		}
 
 		fn offchain_worker(block_number: T::BlockNumber) {
@@ -347,14 +369,14 @@ impl<T: Trait> Module<T> {
 	fn handle_round0(block_number: T::BlockNumber) {
 		const ALREADY_SET: () = ();
 
-		let (my_ix, auth) = match Self::local_authority_key() {
+		let auth = match Self::local_authority_key() {
 			Some((ix, auth)) => {
 				debug::info!(
 					"DKG handle_round0 called at block: {:?} by authority: {:?}",
 					block_number,
 					ix,
 				);
-				(ix, auth)
+				auth
 			}
 			None => {
 				debug::info!(
@@ -409,14 +431,14 @@ impl<T: Trait> Module<T> {
 	fn handle_round1(block_number: T::BlockNumber) {
 		const ALREADY_SET: () = ();
 
-		let (my_ix, auth) = match Self::local_authority_key() {
+		let auth = match Self::local_authority_key() {
 			Some((ix, auth)) => {
 				debug::info!(
 					"DKG handle_round1 called at block: {:?} by authority: {:?}",
 					block_number,
 					ix,
 				);
-				(ix, auth)
+				auth
 			}
 			None => {
 				debug::info!(
@@ -602,6 +624,14 @@ impl<T: Trait> Module<T> {
 	fn handle_round3(block_number: T::BlockNumber) {
 		const ALREADY_SET: () = ();
 
+		// 0. Check if there are enough qualified nodes
+		let threshold = Threshold::get();
+		let qualified = Self::is_correct_dealer();
+		assert!(
+			qualified.iter().map(|&v| v as u32).sum::<u32>() >= threshold,
+			"not enough qualified nodes"
+		);
+
 		let (my_ix, auth) = match Self::local_authority_key() {
 			Some((ix, auth)) => {
 				debug::info!(
@@ -620,7 +650,8 @@ impl<T: Trait> Module<T> {
 			}
 		};
 
-		let val = StorageValueRef::persistent(b"dkw::threshold_pair");
+		// 1. derive local threshold secret
+		let val = StorageValueRef::persistent(b"dkw::threshold_secret_key");
 		let res = val.mutate(|last_set: Option<Option<[u64; 4]>>| match last_set {
 			Some(Some(_)) => Err(ALREADY_SET),
 			_ => {
@@ -634,14 +665,60 @@ impl<T: Trait> Module<T> {
 			return;
 		}
 
-		let n_members = Self::authorities().len();
-		let threshold = Threshold::get();
+		let secret = StorageValueRef::persistent(b"dkw::secret_shares")
+			.get::<Vec<Option<[u64; 4]>>>()
+			.unwrap()
+			.unwrap()
+			.iter()
+			.enumerate()
+			.filter_map(|(ix, &share)| match (qualified[ix], share) {
+				(false, _) | (true, None) => None,
+				(true, Some(share)) => Some(Scalar::from_raw(share)),
+			})
+			.fold(Scalar::zero(), |a, b| a + b);
 
-		let qualified = Self::is_correct_dealer();
+		let res: Result<_, ()> = val.mutate(|_| Ok((my_ix, secret.to_bytes())));
 
-		let mut share_providers = Vec::new();
-		for i in 0..n_members {
-			share_providers.push(i);
+		if res.is_err() || res.unwrap().is_err() {
+			debug::info!("DKG handle_round3 error in ssecret");
+			return;
+		}
+
+		// 2. derive and post verification master key
+		let comms = Self::committed_polynomilas()
+			.into_iter()
+			.enumerate()
+			.filter_map(|(ix, comms)| match (qualified[ix], comms.is_empty()) {
+				(false, _) | (true, true) => None,
+				(true, false) => Some(comms[0].clone()),
+			})
+			.collect();
+
+		let mvk = Commitment::derive_mvk(comms);
+
+		let round2_number: T::BlockNumber = END_ROUND_2.into();
+		let hash_round2 = <frame_system::Module<T>>::block_hash(round2_number);
+
+		let signer =
+			Signer::<T, T::AuthorityId>::all_accounts().with_filter([auth.into()].to_vec());
+		if !signer.can_sign() {
+			debug::info!("DKG ERROR NO KEYS FOR SIGNER {:?}!!!", my_ix);
+			return;
+		}
+
+		let tx_res = signer.send_signed_transaction(|_| {
+			Call::post_master_verification_key(mvk.clone(), hash_round2)
+		});
+
+		for (acc, res) in &tx_res {
+			match res {
+				Ok(()) => debug::info!("DKG sending the master key by [{:?}]", acc.id,),
+				Err(e) => debug::error!(
+					"DKG [{:?}] Failed to submit transaction with master key: {:?}",
+					acc.id,
+					e
+				),
+			}
 		}
 	}
 

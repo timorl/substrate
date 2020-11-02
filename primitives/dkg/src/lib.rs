@@ -4,8 +4,10 @@ use codec::{Decode, Encode, EncodeLike, Error, Input, Output};
 use sp_core::crypto::KeyTypeId;
 use sp_std::vec::Vec;
 
+pub use sp_randomness_beacon::VerifyKey;
+
 pub use bls12_381::Scalar;
-use bls12_381::{G1Affine, G2Affine};
+use bls12_381::{G1Affine, G2Affine, G2Projective};
 
 pub const KEY_TYPE: KeyTypeId = KeyTypeId(*b"dkg!");
 
@@ -106,6 +108,17 @@ impl Commitment {
 		Commitment {
 			g2point: G2Affine::from(G2Affine::generator() * coeff),
 		}
+	}
+
+	pub fn derive_mvk(comms: Vec<Commitment>) -> VerifyKey {
+		let g2point = comms
+			.into_iter()
+			.map(|c| G2Projective::from(c.g2point))
+			.fold(G2Projective::identity(), |a, b| a + b)
+			.into();
+
+		// TODO refactor
+		VerifyKey::decode(&mut &Commitment { g2point }.encode()[..]).unwrap()
 	}
 }
 

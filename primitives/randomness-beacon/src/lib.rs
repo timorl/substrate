@@ -41,7 +41,7 @@ impl Decode for Signature {
 	}
 }
 
-#[derive(Clone, Default)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct VerifyKey {
 	point: G2Affine,
 }
@@ -139,19 +139,21 @@ fn scalar_from_seed(seed: [u64; 4]) -> Scalar {
 
 #[cfg(any(feature = "full_crypto", feature = "std"))]
 impl Pair {
+	#[cfg(any(feature = "full_crypto", feature = "std"))]
+	pub fn from_secret(secret: Scalar) -> Self {
+		let verify = VerifyKey::from_secret(&secret);
+		Pair { secret, verify }
+	}
+
 	pub fn generate() -> Self {
 		let secret = random_scalar();
-		let verify = VerifyKey::from_secret(&secret);
-
-		Pair { secret, verify }
+		Self::from_secret(secret)
 	}
 
 	#[cfg(any(feature = "full_crypto", feature = "std"))]
 	pub fn from_seed(seed: [u64; 4]) -> Self {
 		let secret = scalar_from_seed(seed);
-		let verify = VerifyKey::from_secret(&secret);
-
-		Pair { secret, verify }
+		Self::from_secret(secret)
 	}
 
 	#[cfg(any(feature = "full_crypto", feature = "std"))]
