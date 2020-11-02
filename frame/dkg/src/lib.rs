@@ -47,11 +47,6 @@ pub const END_ROUND_3: u32 = 20;
 // t is the threshold: it is necessary and sufficient to have t shares to combine
 // the degree of the polynomial is thus t-1
 
-// Should be a decrypted share (milestone 2) + along with a proof of descryption (only in milestone 3)
-// #[derive(Encode, Decode, Clone, PartialEq, Eq, RuntimeDebug)]
-// pub struct DisputeAgainstDealer {
-// }
-
 // TODO the following and the definition of AuthorityId probably needs a refactor. The problem is
 // that the trait CreateSignedTransaction needed by Signer imposes that AuthorityId must extend
 // AppCrypto and on the other hand if we want to use AuthorityId as public keys of validators, i.e.
@@ -168,7 +163,6 @@ decl_storage! {
 		// ith entry is the CommitedPoly of (i+1)th node submitted in a tx in round 1
 		// CommittedPolynomials: Vec<Option<CommittedPoly>>;
 		CommittedPolynomials get(fn committed_polynomilas): Vec<Vec<Commitment>>;
-
 		// ith entry is the EncShareList of (i+1)th node submitted in a tx in round 1
 		// EncryptedSharesLists: Vec<Option<EncShareList>>;
 		EncryptedSharesLists get(fn encrypted_shares_lists): Vec<Vec<EncryptedShare>>;
@@ -177,14 +171,12 @@ decl_storage! {
 		// round 2
 
 		// ith entry is a list of disputes against dealers raised by node i submitted in round 2
-		DisputesAgainstDealer get(fn disputes_against_dealer): Vec<Vec<bool>>;
-
-		// round 3
-
+		DisputesAgainstDealer get(fn disputes_against_dealer): Vec<Vec<AuthIndex>>;
 		// list of n bools: ith is true <=> both the below conditions are satisfied:
 		// 1) (i+1)th node succesfully participated in round 0 and round 1
 		// 2) there was no succesful dispute that proves cheating of (i+1)th node in round 2
-		IsCorrectDealer: Vec<bool>;
+		IsCorrectDealer get(fn is_correct_dealer): Vec<bool>;
+
 
 		/// The current authorities
 		pub Authorities get(fn authorities): Vec<T::AuthorityId>;
@@ -208,7 +200,6 @@ decl_module! {
 		// TODO: we need to be careful with weights -- for now they are 0, but need to think about them later
 		#[weight = 0]
 		pub fn post_encryption_key(origin, pk: EncryptionPublicKey)  {
-			// TODO should we block receiving pk after END_ROUND_0?
 			debug::RuntimeLogger::init();
 
 			let now = <frame_system::Module<T>>::block_number();
@@ -216,17 +207,19 @@ decl_module! {
 
 			match Self::authority_index(who){
 				Some(ix) => {
-					debug::info!("DKG POST_ENCRYPTION_KEY DETERMINED AUTH: {:?} block {:?} key {:?}", ix, now, pk);
-					EncryptionPKs::mutate(|ref mut values| values[ix as usize] = Some(pk));
+					if now > END_ROUND_0.into() {
+						debug::info!("DKG POST_ENCRYPTION_KEY FROM: {:?} block {:?} TOO LATE; SKIPPING", ix, now);
+					} else {
+						debug::info!("DKG POST_ENCRYPTION_KEY FROM: {:?} block {:?}", ix, now);
+						EncryptionPKs::mutate(|ref mut values| values[ix as usize] = Some(pk));
+					}
 				}
 				None =>  debug::info!("DKG POST_ENCRYPTION_KEY FAILED FIND AUTH"),
 			}
-
 		}
 
 		#[weight = 0]
 		pub fn post_secret_shares(origin, shares: Vec<EncryptedShare>, comm_poly: Vec<Commitment>, hash_round0: T::Hash) {
-			// TODO should we block receiving shares after END_ROUND_1?
 			debug::RuntimeLogger::init();
 
 			let now = <frame_system::Module<T>>::block_number();
@@ -236,13 +229,21 @@ decl_module! {
 				Some(ix) => {
 					let round0_number: T::BlockNumber = END_ROUND_0.into();
 					let correct_hash_round0 = <frame_system::Module<T>>::block_hash(round0_number);
-					if hash_round0 != correct_hash_round0 {
-						debug::info!("DKG POST_SECRET_SHARES CALL: received secret shares for wrong hash_round0:
-							{:?} instead of {:?} from {:?}",hash_round0, correct_hash_round0, ix);
-					} else {
-						debug::info!("DKG POST_SECRET_SHARES CALL: BLOCK_NUMBER: {:?} WHO {:?} shares {:?}", now, ix, shares);
-						EncryptedSharesLists::mutate(|ref mut values| values[ix as usize] = shares);
-						CommittedPolynomials::mutate(|ref mut values| values[ix as usize] = comm_poly);
+					match (hash_round0 == correct_hash_round0, now <= END_ROUND_1.into()) {
+						(false, _) => { debug::info!(
+							"DKG POST_SECRET_SHARES CALL: wrong hash: {:?} instead of {:?} from {:?}",
+							hash_round0, correct_hash_round0, ix);
+						}
+						(true, false) => { debug::info!(
+								"DKG POST_SECRET_SHARES CALL: BLOCK: {:?} WHO {:?} TOO LATE; SKIPPING",
+								now, ix);
+						}
+						(true, true) => { debug::info!(
+							"DKG POST_SECRET_SHARES CALL: BLOCK_NUMBER: {:?} WHO {:?} SHARES {:?}",
+							now, ix, shares);
+							EncryptedSharesLists::mutate(|ref mut values| values[ix as usize] = shares);
+							CommittedPolynomials::mutate(|ref mut values| values[ix as usize] = comm_poly);
+						}
 					}
 				}
 				None =>  debug::info!("DKG POST_SECRET_SHARES FAILED FIND AUTH"),
@@ -250,7 +251,7 @@ decl_module! {
 		}
 
 		#[weight = 0]
-		pub fn post_disputes(origin, disputes: Vec<bool>, hash_round1: T::Hash) {
+		pub fn post_disputes(origin, disputes: Vec<AuthIndex>, hash_round1: T::Hash) {
 			debug::RuntimeLogger::init();
 
 			let now = <frame_system::Module<T>>::block_number();
@@ -260,12 +261,24 @@ decl_module! {
 				Some(ix) => {
 					let round1_number: T::BlockNumber = END_ROUND_1.into();
 					let correct_hash_round1 = <frame_system::Module<T>>::block_hash(round1_number);
-					if hash_round1 != correct_hash_round1 {
-						debug::info!("DKG POST_DISPUTES CALL: received disputes for wrong hash_round1:
-							{:?} instead of {:?} from {:?}",hash_round1, correct_hash_round1, ix);
-					} else {
-						debug::info!("DKG POST_DISPUTES CALL: BLOCK_NUMBER: {:?} WHO {:?} disputes {:?}", now, ix, disputes);
-						DisputesAgainstDealer::mutate(|ref mut values| values[ix as usize] = disputes);
+					match (hash_round1 == correct_hash_round1, now <= END_ROUND_2.into()) {
+						(false, _) => { debug::info!(
+							"DKG POST_DISPUTES CALL: wrong hash: {:?} instead of {:?} from {:?}",
+							hash_round1, correct_hash_round1, ix);
+						}
+						(true, false) => { debug::info!(
+								"DKG POST_DISPUTES CALL: BLOCK: {:?} WHO {:?} TOO LATE; SKIPPING",
+								now, ix);
+						}
+						(true, true) => { debug::info!(
+							"DKG POST_DISPUTES CALL: BLOCK_NUMBER: {:?} WHO {:?} disputes {:?}",
+							now, ix, disputes);
+							DisputesAgainstDealer::mutate(|ref mut values| values[ix as usize] = disputes);
+							// TODO verify disputes
+							IsCorrectDealer::mutate(|ref mut values|
+								disputes.iter().for_each(|ix| values[*ix as usize] = false)
+							);
+						}
 					}
 				}
 				None =>  debug::info!("DKG POST_DISPUTES FAILED FIND AUTH"),
@@ -283,7 +296,7 @@ decl_module! {
 			} else if block_number < END_ROUND_2.into() {
 				// implement creating tx for round 2
 					Self::handle_round2(block_number);
-			}else if block_number < END_ROUND_3.into() {
+			} else if block_number < END_ROUND_3.into() {
 				// implement creating tx for round 3
 					Self::handle_round3(block_number);
 			}
@@ -296,7 +309,7 @@ impl<T: Trait> Module<T> {
 		if !authorities.is_empty() {
 			debug::info!("DKG GENESIS init_store with authorities {:?}", authorities);
 			assert!(
-				<Authorities<T>>::get().is_empty(),
+				Self::authorities().is_empty(),
 				"Authorities are already initialized!"
 			);
 			let mut authorities = authorities.to_vec();
@@ -309,8 +322,8 @@ impl<T: Trait> Module<T> {
 			EncryptedSharesLists::put(
 				sp_std::vec![Vec::<EncryptedShare>::new(); n_members].to_vec(),
 			);
-			DisputesAgainstDealer::put(sp_std::vec![Vec::<bool>::new(); n_members].to_vec());
-			IsCorrectDealer::put(sp_std::vec![false; n_members].to_vec());
+			DisputesAgainstDealer::put(sp_std::vec![Vec::<AuthIndex>::new(); n_members].to_vec());
+			IsCorrectDealer::put(sp_std::vec![true; n_members].to_vec());
 		}
 	}
 
@@ -330,32 +343,29 @@ impl<T: Trait> Module<T> {
 		Threshold::set(threshold);
 	}
 
-	fn authority_index(who: T::AccountId) -> Option<AuthIndex> {
-		Self::authorities()
-			.into_iter()
-			.position(|auth| Into::<T::Public>::into(auth.clone()).into_account() == who)
-			.map(|p| p as AuthIndex)
-	}
-
+	// generate encryption pair and send public key on chain
 	fn handle_round0(block_number: T::BlockNumber) {
-		// TODO: encrypt the key in the store?
-		let res = Self::local_authority_key();
-		if res.is_none() {
-			debug::info!(
-				"DKG handle_round0 called at block: {:?} by non-authority, skipping",
-				block_number
-			);
-			return;
-		}
-		let (my_ix, auth) = res.unwrap();
-		debug::info!(
-			"DKG handle_round0 called at block: {:?} by authority: {:?}: {:?}",
-			block_number,
-			my_ix,
-			auth
-		);
 		const ALREADY_SET: () = ();
 
+		let (my_ix, auth) = match Self::local_authority_key() {
+			Some((ix, auth)) => {
+				debug::info!(
+					"DKG handle_round0 called at block: {:?} by authority: {:?}",
+					block_number,
+					ix,
+				);
+				(ix, auth)
+			}
+			None => {
+				debug::info!(
+					"DKG handle_round0 called at block: {:?} by non-authority, skipping",
+					block_number
+				);
+				return;
+			}
+		};
+
+		// TODO: encrypt the key in the store?
 		let val = StorageValueRef::persistent(b"dkw::enc_key");
 		let res = val.mutate(|last_set: Option<Option<[u64; 4]>>| match last_set {
 			Some(Some(_)) => Err(ALREADY_SET),
@@ -372,9 +382,7 @@ impl<T: Trait> Module<T> {
 				Signer::<T, T::AuthorityId>::all_accounts().with_filter([auth.into()].to_vec());
 			if !signer.can_sign() {
 				debug::info!("DKG ERROR NO KEYS FOR SIGNER!!!");
-				// return Err(
-				// 	"No local accounts available. Consider adding one via `author_insertKey` RPC."
-				// )?
+				return;
 			}
 			let enc_pk = EncryptionPublicKey::from_raw_scalar(raw_scalar);
 			let tx_res =
@@ -397,53 +405,30 @@ impl<T: Trait> Module<T> {
 		}
 	}
 
-	fn _authority_index(account: T::AuthorityId) -> AuthIndex {
-		let authorities = <Authorities<T>>::get();
-
-		authorities
-			.into_iter()
-			.position(|auth| auth == account)
-			.map(|ix| ix as AuthIndex)
-			.unwrap()
-	}
-
-	fn local_authority_key() -> Option<(AuthIndex, T::AuthorityId)> {
-		let authorities = <Authorities<T>>::get();
-		let local_keys = T::AuthorityId::all();
-
-		authorities
-			.into_iter()
-			.enumerate()
-			.find_map(move |(index, authority)| {
-				local_keys
-					.clone()
-					.into_iter()
-					.position(|local_key| authority == local_key)
-					.map(|location| (index as AuthIndex, local_keys[location].clone()))
-			})
-	}
-
+	// generate secret polynomial, encrypt it, and send it with commitments to the chain
 	fn handle_round1(block_number: T::BlockNumber) {
-		let res = Self::local_authority_key();
-		if res.is_none() {
-			debug::info!(
-				"DKG handle_round1 called at block: {:?} by non-authority, skipping",
-				block_number
-			);
-			return;
-		}
-		let (my_ix, auth) = res.unwrap();
-		debug::info!(
-			"DKG handle_round1 called at block: {:?} by authority: {:?}: {:?}",
-			block_number,
-			my_ix,
-			auth
-		);
 		const ALREADY_SET: () = ();
-		// TODO we don't generate shares for parties that didn't post their encryption keys. OK?
+
+		let (my_ix, auth) = match Self::local_authority_key() {
+			Some((ix, auth)) => {
+				debug::info!(
+					"DKG handle_round1 called at block: {:?} by authority: {:?}",
+					block_number,
+					ix,
+				);
+				(ix, auth)
+			}
+			None => {
+				debug::info!(
+					"DKG handle_round1 called at block: {:?} by non-authority, skipping",
+					block_number
+				);
+				return;
+			}
+		};
 
 		// 0. generate secrets
-		let n_members = <Authorities<T>>::get().len();
+		let n_members = Self::authorities().len();
 		let threshold = Threshold::get();
 		let val = StorageValueRef::persistent(b"dkw::secret_poly");
 		let res = val.mutate(|last_set: Option<Option<Vec<[u64; 4]>>>| match last_set {
@@ -495,9 +480,7 @@ impl<T: Trait> Module<T> {
 			Signer::<T, T::AuthorityId>::all_accounts().with_filter([auth.into()].to_vec());
 		if !signer.can_sign() {
 			debug::info!("DKG ERROR NO KEYS FOR SIGNER!!!");
-			// return Err(
-			// 	"No local accounts available. Consider adding one via `author_insertKey` RPC."
-			// )?
+			return;
 		}
 		let tx_res = signer.send_signed_transaction(|_| {
 			Call::post_secret_shares(enc_shares.clone(), comms.clone(), hash_round0)
@@ -515,41 +498,27 @@ impl<T: Trait> Module<T> {
 		}
 	}
 
-	fn encryption_keys(n_members: usize) -> Vec<Option<EncryptionKey>> {
-		let raw_secret = StorageValueRef::persistent(b"dkw::enc_key")
-			.get()
-			.unwrap()
-			.unwrap();
-		let secret = Scalar::from_raw(raw_secret);
-		let mut encryption_keys = Vec::new();
-		for ix in 0..n_members {
-			if let Some(ref enc_pk) = Self::encryption_pks()[ix] {
-				encryption_keys.push(Some(enc_pk.to_encryption_key(secret)));
-			} else {
-				encryption_keys.push(None);
-			}
-		}
-
-		encryption_keys
-	}
-
+	// decrypt secret shares and send disputes to the chain
 	fn handle_round2(block_number: T::BlockNumber) {
 		const ALREADY_SET: () = ();
-		let res = Self::local_authority_key();
-		if res.is_none() {
-			debug::info!(
-				"DKG handle_round2 called at block: {:?} by non-authority, skipping",
-				block_number
-			);
-			return;
-		}
-		let (my_ix, auth) = res.unwrap();
-		debug::info!(
-			"DKG handle_round2 called at block: {:?} by authority: {:?}: {:?}",
-			block_number,
-			my_ix,
-			auth
-		);
+
+		let (my_ix, auth) = match Self::local_authority_key() {
+			Some((ix, auth)) => {
+				debug::info!(
+					"DKG handle_round2 called at block: {:?} by authority: {:?}",
+					block_number,
+					ix,
+				);
+				(ix, auth)
+			}
+			None => {
+				debug::info!(
+					"DKG handle_round2 called at block: {:?} by non-authority, skipping",
+					block_number
+				);
+				return;
+			}
+		};
 
 		let val = StorageValueRef::persistent(b"dkw::secret_shares");
 		let res = val.mutate(
@@ -564,14 +533,14 @@ impl<T: Trait> Module<T> {
 			return;
 		}
 
-		let n_members = <Authorities<T>>::get().len();
+		let n_members = Self::authorities().len();
 
 		// 0. generate encryption keys
 		let encryption_keys = Self::encryption_keys(n_members);
 
 		// 1. decrypt shares, check commitments
-		let mut shares: Vec<Option<[u64; 4]>> = sp_std::vec![None; n_members];
-		let mut disputes: Vec<bool> = sp_std::vec![false; n_members];
+		let mut shares = sp_std::vec![None; n_members];
+		let mut disputes = Vec::new();
 
 		for creator in 0..n_members {
 			let ek = &encryption_keys[creator];
@@ -585,12 +554,12 @@ impl<T: Trait> Module<T> {
 			let share = ek.as_ref().unwrap().decrypt(&encrypted_share);
 			if share.is_none() {
 				// TODO add proper proof and commitment verification
-				disputes[creator] = true;
+				disputes.push(creator as AuthIndex);
 			} else {
 				let bytes: [u8; 32] = share.unwrap()[..]
 					.try_into()
 					.expect("slice with incorrect length");
-				let share_data = u8_to_u64(bytes);
+				let share_data = u8_array_to_u64_array(bytes);
 				shares[creator] = Some(share_data);
 			}
 		}
@@ -629,30 +598,89 @@ impl<T: Trait> Module<T> {
 		}
 	}
 
+	// derivie local key pair and master verification key, and send master key to the chain
 	fn handle_round3(block_number: T::BlockNumber) {
 		const ALREADY_SET: () = ();
-		debug::info!("DKG handle_round3 called at block: {:?}", block_number);
-		let val = StorageValueRef::persistent(b"dkw::master_key");
-		let res = val.mutate(|last_set: Option<Option<bool>>| match last_set {
+
+		let (my_ix, auth) = match Self::local_authority_key() {
+			Some((ix, auth)) => {
+				debug::info!(
+					"DKG handle_round3 called at block: {:?} by authority: {:?}",
+					block_number,
+					ix,
+				);
+				(ix, auth)
+			}
+			None => {
+				debug::info!(
+					"DKG handle_round3 called at block: {:?} by non-authority, skipping",
+					block_number
+				);
+				return;
+			}
+		};
+
+		let val = StorageValueRef::persistent(b"dkw::threshold_pair");
+		let res = val.mutate(|last_set: Option<Option<[u64; 4]>>| match last_set {
 			Some(Some(_)) => Err(ALREADY_SET),
 			_ => {
 				debug::info!("DKG generating master_key");
-				Ok(true)
+				Ok([0; 4])
 			}
 		});
 
 		if res.is_err() || res.unwrap().is_err() {
+			debug::info!("DKG handle_round3 error in init store for threshold pair");
 			return;
 		}
 
-		let n_members = <Authorities<T>>::get().len() as u64;
-		let _threshold = Threshold::get();
+		let n_members = Self::authorities().len();
+		let threshold = Threshold::get();
 
-		// 1. determine the set of share providers
+		let qualified = Self::is_correct_dealer();
+
 		let mut share_providers = Vec::new();
 		for i in 0..n_members {
 			share_providers.push(i);
 		}
+	}
+
+	fn authority_index(who: T::AccountId) -> Option<AuthIndex> {
+		Self::authorities()
+			.into_iter()
+			.position(|auth| Into::<T::Public>::into(auth.clone()).into_account() == who)
+			.map(|p| p as AuthIndex)
+	}
+
+	fn local_authority_key() -> Option<(AuthIndex, T::AuthorityId)> {
+		let local_keys = T::AuthorityId::all();
+
+		Self::authorities()
+			.into_iter()
+			.enumerate()
+			.find_map(move |(index, authority)| {
+				local_keys
+					.clone()
+					.into_iter()
+					.position(|local_key| authority == local_key)
+					.map(|location| (index as AuthIndex, local_keys[location].clone()))
+			})
+	}
+
+	fn encryption_keys(n_members: usize) -> Vec<Option<EncryptionKey>> {
+		let raw_secret = StorageValueRef::persistent(b"dkw::enc_key")
+			.get()
+			.unwrap()
+			.unwrap();
+		let secret = Scalar::from_raw(raw_secret);
+		let mut encryption_keys = sp_std::vec![None; n_members];
+		for ix in 0..n_members {
+			if let Some(ref enc_pk) = Self::encryption_pks()[ix] {
+				encryption_keys[ix] = Some(enc_pk.to_encryption_key(secret));
+			}
+		}
+
+		encryption_keys
 	}
 }
 
@@ -660,7 +688,7 @@ impl<T: Trait> sp_runtime::BoundToRuntimeAppPublic for Module<T> {
 	type Public = T::AuthorityId;
 }
 
-fn u8_to_u64(bytes: [u8; 32]) -> [u64; 4] {
+fn u8_array_to_u64_array(bytes: [u8; 32]) -> [u64; 4] {
 	let mut out = [0u64; 4];
 	for i in 0..4 {
 		out[i] = u64::from_le_bytes(
@@ -673,7 +701,7 @@ fn u8_to_u64(bytes: [u8; 32]) -> [u64; 4] {
 }
 
 fn gen_raw_scalar() -> [u64; 4] {
-	u8_to_u64(sp_io::offchain::random_seed())
+	u8_array_to_u64_array(sp_io::offchain::random_seed())
 }
 
 fn gen_poly_coeffs(deg: u32) -> Vec<[u64; 4]> {

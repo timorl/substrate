@@ -78,6 +78,7 @@ impl Decode for EncryptionPublicKey {
 
 impl EncodeLike for EncryptionPublicKey {}
 
+#[derive(Clone)]
 pub struct EncryptionKey {
 	g1point: G1Affine,
 	g2point: G2Affine,
