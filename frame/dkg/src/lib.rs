@@ -161,7 +161,7 @@ decl_storage! {
 		CommittedPolynomials get(fn committed_polynomilas): Vec<Vec<Commitment>>;
 		// ith entry is the EncShareList of (i+1)th node submitted in a tx in round 1
 		// EncryptedSharesLists: Vec<Option<EncShareList>>;
-		EncryptedSharesLists get(fn encrypted_shares_lists): Vec<Vec<EncryptedShare>>;
+		EncryptedSharesLists get(fn encrypted_shares_lists): Vec<Vec<Option<EncryptedShare>>>;
 
 
 		// round 2
@@ -219,7 +219,7 @@ decl_module! {
 		}
 
 		#[weight = 0]
-		pub fn post_secret_shares(origin, shares: Vec<EncryptedShare>, comm_poly: Vec<Commitment>, hash_round0: T::Hash) {
+		pub fn post_secret_shares(origin, shares: Vec<Option<EncryptedShare>>, comm_poly: Vec<Commitment>, hash_round0: T::Hash) {
 			debug::RuntimeLogger::init();
 
 			let now = <frame_system::Module<T>>::block_number();
@@ -239,8 +239,7 @@ decl_module! {
 								now, ix);
 						}
 						(true, true) => { debug::info!(
-							"DKG POST_SECRET_SHARES CALL: BLOCK_NUMBER: {:?} WHO {:?} SHARES {:?}",
-							now, ix, shares);
+							"DKG POST_SECRET_SHARES CALL: BLOCK_NUMBER: {:?} WHO {:?}", now, ix);
 							EncryptedSharesLists::mutate(|ref mut values| values[ix as usize] = shares);
 							CommittedPolynomials::mutate(|ref mut values| values[ix as usize] = comm_poly);
 							IsCorrectDealer::mutate(|ref mut values| values[ix as usize] = true);
@@ -335,14 +334,13 @@ impl<T: Trait> Module<T> {
 			authorities.sort();
 			<Authorities<T>>::put(&authorities);
 			let n_members = authorities.len();
-			let none: Option<EncryptionPublicKey> = None;
-			EncryptionPKs::put(sp_std::vec![none; n_members].to_vec());
-			CommittedPolynomials::put(sp_std::vec![Vec::<Commitment>::new(); n_members].to_vec());
+			EncryptionPKs::put(sp_std::vec![None::<EncryptionPublicKey>; n_members]);
+			CommittedPolynomials::put(sp_std::vec![Vec::<Commitment>::new(); n_members]);
 			EncryptedSharesLists::put(
-				sp_std::vec![Vec::<EncryptedShare>::new(); n_members].to_vec(),
+				sp_std::vec![sp_std::vec![None::<EncryptedShare>; n_members]; n_members],
 			);
-			DisputesAgainstDealer::put(sp_std::vec![Vec::<AuthIndex>::new(); n_members].to_vec());
-			IsCorrectDealer::put(sp_std::vec![false; n_members].to_vec());
+			DisputesAgainstDealer::put(sp_std::vec![Vec::<AuthIndex>::new(); n_members]);
+			IsCorrectDealer::put(sp_std::vec![false; n_members]);
 		}
 	}
 
@@ -475,14 +473,14 @@ impl<T: Trait> Module<T> {
 		let encryption_keys = Self::encryption_keys(n_members);
 
 		// 2. generate secret shares
-		let mut enc_shares = Vec::new();
+		let mut enc_shares = sp_std::vec![None; n_members];
 
 		for ix in 0..n_members {
 			if let Some(ref enc_key) = encryption_keys[ix] {
 				let x = &Scalar::from_raw([ix as u64 + 1, 0, 0, 0]);
 				let share = poly_eval(poly, x);
 				let share_data = share.to_bytes().to_vec();
-				enc_shares.push(enc_key.encrypt(&share_data));
+				enc_shares[ix] = Some(enc_key.encrypt(&share_data));
 			}
 		}
 
@@ -563,13 +561,13 @@ impl<T: Trait> Module<T> {
 
 		for creator in 0..n_members {
 			let ek = &encryption_keys[creator];
-			if ek.is_none() || Self::encrypted_shares_lists()[creator].is_empty() {
+			if ek.is_none() || Self::encrypted_shares_lists()[creator][my_ix as usize].is_none() {
 				// TODO no one have seen shares from this creator, we just skip it
 				continue;
 			}
-			// TODO add commitment verification
-			let _commitment = &Self::committed_polynomilas()[creator][my_ix as usize];
-			let encrypted_share = &Self::encrypted_shares_lists()[creator][my_ix as usize];
+			let encrypted_share = &Self::encrypted_shares_lists()[creator][my_ix as usize]
+				.clone()
+				.unwrap();
 			let share = ek.as_ref().unwrap().decrypt(&encrypted_share);
 			if share.is_none() {
 				// TODO add proper proof and commitment verification
