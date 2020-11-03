@@ -96,6 +96,8 @@ pub fn local_testnet_config() -> Result<ChainSpec, String> {
 				vec![
 					authority_keys_from_seed("Alice"),
 					authority_keys_from_seed("Bob"),
+					authority_keys_from_seed("Charlie"),
+					authority_keys_from_seed("Dave"),
 				],
 				// Sudo account
 				get_account_id_from_seed::<sr25519::Public>("Alice"),
@@ -166,7 +168,7 @@ fn testnet_genesis(
 				.iter()
 				.map(|x| (x.2.clone().into()))
 				.collect(),
-			threshold: 2,
+			threshold: initial_authorities.len() as u32 / 3 + 1,
 		}),
 		pallet_sudo: Some(SudoConfig {
 			// Assign network admin rights.

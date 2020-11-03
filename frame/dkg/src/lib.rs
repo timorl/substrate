@@ -243,6 +243,7 @@ decl_module! {
 							now, ix, shares);
 							EncryptedSharesLists::mutate(|ref mut values| values[ix as usize] = shares);
 							CommittedPolynomials::mutate(|ref mut values| values[ix as usize] = comm_poly);
+							IsCorrectDealer::mutate(|ref mut values| values[ix as usize] = true);
 						}
 					}
 				}
@@ -341,7 +342,7 @@ impl<T: Trait> Module<T> {
 				sp_std::vec![Vec::<EncryptedShare>::new(); n_members].to_vec(),
 			);
 			DisputesAgainstDealer::put(sp_std::vec![Vec::<AuthIndex>::new(); n_members].to_vec());
-			IsCorrectDealer::put(sp_std::vec![true; n_members].to_vec());
+			IsCorrectDealer::put(sp_std::vec![false; n_members].to_vec());
 		}
 	}
 
@@ -623,17 +624,21 @@ impl<T: Trait> Module<T> {
 		// 0. Check if there are enough qualified nodes
 		let threshold = Threshold::get();
 		let qualified = Self::is_correct_dealer();
+		let n_qualified = qualified.iter().map(|&v| v as u32).sum::<u32>();
 		assert!(
-			qualified.iter().map(|&v| v as u32).sum::<u32>() >= threshold,
-			"not enough qualified nodes"
+			n_qualified >= threshold,
+			"not enough qualified nodes: needs at least {}, got {}",
+			threshold,
+			n_qualified,
 		);
 
 		let (my_ix, auth) = match Self::local_authority_key() {
 			Some((ix, auth)) => {
 				debug::info!(
-					"DKG handle_round3 called at block: {:?} by authority: {:?}",
+					"DKG handle_round3 called at block: {:?} by authority: {:?} qualified nodes {:?}",
 					block_number,
 					ix,
+					qualified,
 				);
 				(ix, auth)
 			}
