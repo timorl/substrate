@@ -146,6 +146,14 @@ impl Decode for Commitment {
 
 impl EncodeLike for Commitment {}
 
+sp_api::decl_runtime_apis! {
+	pub trait DKGApi {
+		fn master_verification_key() -> Option<VerifyKey>;
+		fn threshold_secret_key() -> Option<[u64; 4]>;
+		fn final_round() -> u32;
+	}
+}
+
 #[cfg(test)]
 mod tests {
 	use super::*;

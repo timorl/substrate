@@ -17,7 +17,7 @@
 
 #![cfg_attr(not(feature = "std"), no_std)]
 
-use frame_support::{debug, decl_module, decl_storage, Parameter};
+use frame_support::{debug, decl_module, decl_storage, traits::Get, Parameter};
 use frame_system::{
 	ensure_signed,
 	offchain::{AppCrypto, CreateSignedTransaction, SendSignedTransaction, Signer},
@@ -32,13 +32,6 @@ use sp_std::{convert::TryInto, vec::Vec};
 use sp_dkg::{Commitment, EncryptionKey, EncryptionPublicKey, Scalar, VerifyKey};
 
 // TODO handle the situation when the node is not an authority
-
-// TODO maybe we could control the round boundaries with events?
-// These should be perhaps in some config in the genesis block?
-pub const END_ROUND_0: u32 = 5;
-pub const END_ROUND_1: u32 = 10;
-pub const END_ROUND_2: u32 = 15;
-pub const END_ROUND_3: u32 = 20;
 
 // TODO do we add protection against biasing
 
@@ -143,6 +136,9 @@ pub trait Trait: CreateSignedTransaction<Call<Self>> {
 
 	/// The overarching dispatch call type.
 	type Call: From<Call<Self>>;
+
+	// TODO maybe we could control the round boundaries with events?
+	type RoundEnds: Get<[u32; 4]>;
 }
 
 // An index of the authority on the list of validators.
@@ -211,7 +207,7 @@ decl_module! {
 
 			match Self::authority_index(who){
 				Some(ix) => {
-					if now > END_ROUND_0.into() {
+					if now > T::RoundEnds::get()[0].into() {
 						debug::info!("DKG POST_ENCRYPTION_KEY FROM: {:?} block {:?} TOO LATE; SKIPPING", ix, now);
 					} else {
 						debug::info!("DKG POST_ENCRYPTION_KEY FROM: {:?} block {:?}", ix, now);
@@ -231,9 +227,9 @@ decl_module! {
 
 			match Self::authority_index(who){
 				Some(ix) => {
-					let round0_number: T::BlockNumber = END_ROUND_0.into();
+					let round0_number: T::BlockNumber = T::RoundEnds::get()[0].into();
 					let correct_hash_round0 = <frame_system::Module<T>>::block_hash(round0_number);
-					match (hash_round0 == correct_hash_round0, now <= END_ROUND_1.into()) {
+					match (hash_round0 == correct_hash_round0, now <= T::RoundEnds::get()[1].into()) {
 						(false, _) => { debug::info!(
 							"DKG POST_SECRET_SHARES CALL: wrong hash: {:?} instead of {:?} from {:?}",
 							hash_round0, correct_hash_round0, ix);
@@ -263,9 +259,9 @@ decl_module! {
 
 			match Self::authority_index(who){
 				Some(ix) => {
-					let round1_number: T::BlockNumber = END_ROUND_1.into();
+					let round1_number: T::BlockNumber = T::RoundEnds::get()[1].into();
 					let correct_hash_round1 = <frame_system::Module<T>>::block_hash(round1_number);
-					match (hash_round1 == correct_hash_round1, now <= END_ROUND_2.into()) {
+					match (hash_round1 == correct_hash_round1, now <= T::RoundEnds::get()[2].into()) {
 						(false, _) => { debug::info!(
 							"DKG POST_DISPUTES CALL: wrong hash: {:?} instead of {:?} from {:?}",
 							hash_round1, correct_hash_round1, ix);
@@ -310,15 +306,15 @@ decl_module! {
 		fn offchain_worker(block_number: T::BlockNumber) {
 			debug::info!("DKG Hello World from offchain workers!");
 
-			if block_number < END_ROUND_0.into()  {
+			if block_number < T::RoundEnds::get()[0].into()  {
 					Self::handle_round0(block_number);
-			} else if block_number < END_ROUND_1.into() {
+			} else if block_number < T::RoundEnds::get()[1].into() {
 				// implement creating tx for round 1
 					Self::handle_round1(block_number);
-			} else if block_number < END_ROUND_2.into() {
+			} else if block_number < T::RoundEnds::get()[2].into() {
 				// implement creating tx for round 2
 					Self::handle_round2(block_number);
-			} else if block_number < END_ROUND_3.into() {
+			} else if block_number < T::RoundEnds::get()[3].into() {
 				// implement creating tx for round 3
 					Self::handle_round3(block_number);
 			}
@@ -496,7 +492,7 @@ impl<T: Trait> Module<T> {
 		}
 
 		// 4. send encrypted secret shares
-		let round0_number: T::BlockNumber = END_ROUND_0.into();
+		let round0_number: T::BlockNumber = T::RoundEnds::get()[0].into();
 		let hash_round0 = <frame_system::Module<T>>::block_hash(round0_number);
 		let signer =
 			Signer::<T, T::AuthorityId>::all_accounts().with_filter([auth.into()].to_vec());
@@ -595,7 +591,7 @@ impl<T: Trait> Module<T> {
 		}
 
 		// 3. send disputes
-		let round1_number: T::BlockNumber = END_ROUND_1.into();
+		let round1_number: T::BlockNumber = T::RoundEnds::get()[1].into();
 		let hash_round1 = <frame_system::Module<T>>::block_hash(round1_number);
 
 		let signer =
@@ -696,7 +692,7 @@ impl<T: Trait> Module<T> {
 
 		let mvk = Commitment::derive_mvk(comms);
 
-		let round2_number: T::BlockNumber = END_ROUND_2.into();
+		let round2_number: T::BlockNumber = T::RoundEnds::get()[2].into();
 		let hash_round2 = <frame_system::Module<T>>::block_hash(round2_number);
 
 		let signer =
@@ -758,6 +754,24 @@ impl<T: Trait> Module<T> {
 		}
 
 		encryption_keys
+	}
+
+	pub fn master_verification_key() -> Option<VerifyKey> {
+		match MasterVerificationKey::exists() {
+			true => Some(MasterVerificationKey::get()),
+			false => None,
+		}
+	}
+
+	pub fn threshold_secret_key() -> Option<[u64; 4]> {
+		match StorageValueRef::persistent(b"dkw::threshold_secret_key").get() {
+			None | Some(None) => None,
+			Some(Some(raw_key)) => Some(raw_key),
+		}
+	}
+
+	pub fn final_round() -> u32 {
+		T::RoundEnds::get()[3]
 	}
 }
 

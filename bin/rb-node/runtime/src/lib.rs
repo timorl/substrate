@@ -233,7 +233,7 @@ impl pallet_timestamp::Trait for Runtime {
 
 parameter_types! {
 	pub const ExistentialDeposit: u128 = 500;
-		pub const MaxLocks: u32 = 50;
+	pub const MaxLocks: u32 = 50;
 }
 
 impl pallet_balances::Trait for Runtime {
@@ -267,9 +267,14 @@ impl pallet_sudo::Trait for Runtime {
 
 impl pallet_randomness_beacon::Trait for Runtime {}
 
+parameter_types! {
+	pub const RoundEnds: [u32; 4] = [2,4,6,8];
+}
+
 impl pallet_dkg::Trait for Runtime {
 	type Call = Call;
 	type AuthorityId = pallet_dkg::crypto::DKGId;
+	type RoundEnds = RoundEnds;
 }
 
 impl<LocalCall> frame_system::offchain::CreateSignedTransaction<LocalCall> for Runtime
@@ -467,6 +472,20 @@ impl_runtime_apis! {
 			encoded: Vec<u8>,
 		) -> Option<Vec<(Vec<u8>, KeyTypeId)>> {
 			opaque::SessionKeys::decode_into_raw_public_keys(&encoded)
+		}
+	}
+
+	impl sp_dkg::DKGApi<Block> for Runtime {
+		fn master_verification_key() -> Option<sp_dkg::VerifyKey> {
+			DKG::master_verification_key()
+		}
+
+		fn threshold_secret_key() -> Option<[u64; 4]> {
+			DKG::threshold_secret_key()
+		}
+
+		fn final_round() -> u32 {
+			DKG::final_round()
 		}
 	}
 
