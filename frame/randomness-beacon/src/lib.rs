@@ -19,7 +19,7 @@
 //! This pallet keeps in its store a randomness verifier that allows to verify whether
 //! a given seed is correct for a particular block or not. Internally, such a verifier
 //! keeps a joint public key for BLS threshold signatures.
-//! In every block of height >= `START_BEACON_HEIGHT` there is an inherent which is
+//! In every block of height >= `T::StartHeight::get()` there is an inherent which is
 //! supposed to contain the seed for the current block. Correctness of this seed
 //! is checked using the randomness verifier and the whole block is discarded as incorrect
 //! in case it outputs false.
@@ -30,17 +30,20 @@
 
 use codec::{Decode, Encode};
 use frame_support::{
-	decl_error, decl_module, decl_storage, traits::Randomness as RandomnessT, weights::Weight,
+	decl_error, decl_module, decl_storage, traits::Get, traits::Randomness as RandomnessT,
+	weights::Weight,
 };
 use frame_system::ensure_none;
 use sp_inherents::{InherentData, InherentIdentifier, ProvideInherent};
 use sp_randomness_beacon::{
 	inherents::{InherentError, INHERENT_IDENTIFIER},
-	Randomness, VerifyKey, START_BEACON_HEIGHT,
+	Randomness, VerifyKey,
 };
 use sp_std::{result, vec::Vec};
 
-pub trait Trait: frame_system::Trait {}
+pub trait Trait: frame_system::Trait {
+	type StartHeight: Get<u32>;
+}
 
 decl_storage! {
 	trait Store for Module<T: Trait> as RandomnessBeacon {
@@ -83,10 +86,20 @@ decl_module! {
 		}
 
 		fn on_finalize(bn: T::BlockNumber) {
-			if bn >= START_BEACON_HEIGHT.into() {
+			if bn >= T::StartHeight::get().into() {
 				assert!(<Self as Store>::DidUpdate::take(), "Randomness must be put into the block");
 			}
 		}
+	}
+}
+
+impl<T: Trait> Module<T> {
+	pub fn start_height() -> T::BlockNumber {
+		T::StartHeight::get().into()
+	}
+
+	pub fn set_master_key(_master_key: VerifyKey) -> bool {
+		true
 	}
 }
 
@@ -115,7 +128,7 @@ impl<T: Trait> ProvideInherent for Module<T> {
 	/// for the current block. This seed is provided to the pallet via inherent data.
 	fn create_inherent(data: &InherentData) -> Option<Self::Call> {
 		let now = <frame_system::Module<T>>::block_number();
-		if now >= T::BlockNumber::from(START_BEACON_HEIGHT) {
+		if now >= T::BlockNumber::from(T::StartHeight::get()) {
 			return Some(Self::Call::set_random_bytes(extract_random_bytes(data)));
 		}
 		None
@@ -125,7 +138,7 @@ impl<T: Trait> ProvideInherent for Module<T> {
 	/// a correct randomness seed for the current block.
 	fn check_inherent(call: &Self::Call, _: &InherentData) -> result::Result<(), Self::Error> {
 		let now = <frame_system::Module<T>>::block_number();
-		if now < T::BlockNumber::from(START_BEACON_HEIGHT) {
+		if now < T::BlockNumber::from(T::StartHeight::get()) {
 			return Ok(());
 		}
 		if !<Self as Store>::RandomnessVerifier::exists() {

@@ -15,7 +15,7 @@ use sc_client_api::backend;
 use sp_api::{ApiExt, ProvideRuntimeApi};
 use sp_blockchain::HeaderBackend;
 use sp_core::traits::SpawnNamed;
-use sp_randomness_beacon::{inherents::INHERENT_IDENTIFIER, Randomness, START_BEACON_HEIGHT};
+use sp_randomness_beacon::{inherents::INHERENT_IDENTIFIER, Randomness, RandomnessBeaconApi};
 use sp_transaction_pool::TransactionPool;
 use std::{collections::HashMap, pin::Pin, sync::mpsc::Receiver, sync::Arc, time};
 
@@ -26,17 +26,19 @@ use futures::{
 use sc_block_builder::{BlockBuilderApi, BlockBuilderProvider};
 use sp_consensus::{Proposal, RecordProof};
 use sp_inherents::InherentData;
+use sp_runtime::generic::BlockId;
 use sp_runtime::traits::{Block as BlockT, DigestFor, Header as HeaderT};
 
 use prometheus_endpoint::Registry as PrometheusRegistry;
 
 use super::Nonce;
 
-
 /// Proposer factory.
 pub struct ProposerFactory<A, B, C> {
 	/// Inner proposer.
 	inner: sc_basic_authorship::ProposerFactory<A, B, C>,
+	/// The client instance.
+	client: Arc<C>,
 	/// Receiver of new randomness.
 	randomness_rx: Arc<Mutex<Receiver<Randomness>>>,
 	/// The set of available random bytes.
@@ -54,10 +56,11 @@ impl<A, B, C> ProposerFactory<A, B, C> {
 		ProposerFactory {
 			inner: sc_basic_authorship::ProposerFactory::new(
 				spawn_handle,
-				client,
+				client.clone(),
 				transaction_pool,
 				prometheus,
 			),
+			client,
 			randomness_rx,
 			available_randomness: Arc::new(Mutex::new(HashMap::new())),
 		}
@@ -76,7 +79,8 @@ where
 		+ Sync
 		+ 'static,
 	C::Api: ApiExt<Block, StateBackend = backend::StateBackendFor<B, Block>>
-		+ BlockBuilderApi<Block, Error = sp_blockchain::Error>,
+		+ BlockBuilderApi<Block, Error = sp_blockchain::Error>
+		+ RandomnessBeaconApi<Block>,
 {
 	type CreateProposer = future::Ready<Result<Self::Proposer, Self::Error>>;
 	type Proposer = Proposer<B, Block, C, A>;
@@ -86,10 +90,17 @@ where
 		let parent_number = *parent_header.number();
 		let mut proposer_nonce = None;
 		// TODO should use global constant
-		if parent_number + 1.into() >= START_BEACON_HEIGHT.into() {
-			let parent_hash = parent_header.hash();
-			let nonce = <Block as BlockT>::Hash::encode(&parent_hash);
-			proposer_nonce = Some(nonce);
+		if let Ok(start_beacon_height) = self
+			.client
+			.runtime_api()
+			.start_beacon_height(&BlockId::Number(parent_number))
+			.map_err(|_| Self::Error::Msg("rutime api call to start_beacon_height".to_string()))
+		{
+			if parent_number + 1.into() >= start_beacon_height {
+				let parent_hash = parent_header.hash();
+				let nonce = <Block as BlockT>::Hash::encode(&parent_hash);
+				proposer_nonce = Some(nonce);
+			}
 		}
 		future::ready(Ok(Proposer {
 			inner: self
@@ -251,7 +262,6 @@ mod tests {
 
 	#[test]
 	fn correctly_proposes_first_block_in_absence_of_random_bytes() {
-		assert!(START_BEACON_HEIGHT >= 2);
 		let client = Arc::new(substrate_test_runtime_client::new());
 		let spawner = sp_core::testing::TaskExecutor::new();
 		let txpool = BasicPool::new_full(Default::default(), None, spawner.clone(), client.clone());
@@ -297,7 +307,6 @@ mod tests {
 
 	#[test]
 	fn fails_to_propose_second_block_when_random_bytes_not_there() {
-		assert_eq!(START_BEACON_HEIGHT, 2);
 		let mut client = Arc::new(substrate_test_runtime_client::new());
 		let spawner = sp_core::testing::TaskExecutor::new();
 		let txpool = BasicPool::new_full(Default::default(), None, spawner.clone(), client.clone());
@@ -357,7 +366,6 @@ mod tests {
 
 	#[test]
 	fn fails_to_proposes_second_block_given_randomness_for_different_nonce() {
-		assert_eq!(START_BEACON_HEIGHT, 2);
 		let mut client = Arc::new(substrate_test_runtime_client::new());
 		let spawner = sp_core::testing::TaskExecutor::new();
 		let txpool = BasicPool::new_full(Default::default(), None, spawner.clone(), client.clone());

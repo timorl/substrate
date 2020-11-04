@@ -265,8 +265,6 @@ impl pallet_sudo::Trait for Runtime {
 	type Call = Call;
 }
 
-impl pallet_randomness_beacon::Trait for Runtime {}
-
 parameter_types! {
 	pub const RoundEnds: [u32; 4] = [2,4,6,8];
 }
@@ -275,6 +273,14 @@ impl pallet_dkg::Trait for Runtime {
 	type Call = Call;
 	type AuthorityId = pallet_dkg::crypto::DKGId;
 	type RoundEnds = RoundEnds;
+}
+
+parameter_types! {
+	pub const StartHeight: u32 = 9;
+}
+
+impl pallet_randomness_beacon::Trait for Runtime {
+	type StartHeight = StartHeight;
 }
 
 impl<LocalCall> frame_system::offchain::CreateSignedTransaction<LocalCall> for Runtime
@@ -486,6 +492,16 @@ impl_runtime_apis! {
 
 		fn final_round() -> u32 {
 			DKG::final_round()
+		}
+	}
+
+	impl sp_randomness_beacon::RandomnessBeaconApi<Block> for Runtime {
+		fn start_beacon_height() -> NumberFor<Block> {
+			RandomnessBeacon::start_height()
+		}
+
+		fn set_master_key(master_key: sp_randomness_beacon::VerifyKey) -> bool {
+			RandomnessBeacon::set_master_key(master_key)
 		}
 	}
 

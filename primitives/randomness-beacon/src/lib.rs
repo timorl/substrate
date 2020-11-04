@@ -16,7 +16,14 @@ use pairing::PairingCurveAffine;
 #[cfg(any(feature = "full_crypto", feature = "std"))]
 use sha3::{Digest, Sha3_256};
 
-pub const START_BEACON_HEIGHT: u32 = 2;
+use sp_runtime::traits::NumberFor;
+
+sp_api::decl_runtime_apis! {
+	pub trait RandomnessBeaconApi {
+		fn start_beacon_height() -> NumberFor<Block> ;
+		fn set_master_key(master_key: VerifyKey) -> bool;
+	}
+}
 
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Signature(G1Affine);
