@@ -15,7 +15,7 @@ use sc_client_api::backend;
 use sp_api::{ApiExt, ProvideRuntimeApi};
 use sp_blockchain::HeaderBackend;
 use sp_core::traits::SpawnNamed;
-use sp_randomness_beacon::{inherents::INHERENT_IDENTIFIER, Randomness, RandomnessBeaconApi};
+use sp_randomness_beacon::{inherents::INHERENT_IDENTIFIER, Randomness};
 use sp_transaction_pool::TransactionPool;
 use std::{collections::HashMap, pin::Pin, sync::mpsc::Receiver, sync::Arc, time};
 
@@ -26,31 +26,31 @@ use futures::{
 use sc_block_builder::{BlockBuilderApi, BlockBuilderProvider};
 use sp_consensus::{Proposal, RecordProof};
 use sp_inherents::InherentData;
-use sp_runtime::generic::BlockId;
-use sp_runtime::traits::{Block as BlockT, DigestFor, Header as HeaderT};
+use sp_runtime::traits::{Block as BlockT, DigestFor, Header as HeaderT, NumberFor};
 
 use prometheus_endpoint::Registry as PrometheusRegistry;
 
 use super::Nonce;
 
 /// Proposer factory.
-pub struct ProposerFactory<A, B, C> {
+pub struct ProposerFactory<A, B, Block: BlockT, C> {
 	/// Inner proposer.
 	inner: sc_basic_authorship::ProposerFactory<A, B, C>,
-	/// The client instance.
-	client: Arc<C>,
+	/// Randomness Beacon starting height.
+	start_beacon_height: NumberFor<Block>,
 	/// Receiver of new randomness.
 	randomness_rx: Arc<Mutex<Receiver<Randomness>>>,
 	/// The set of available random bytes.
 	available_randomness: Arc<Mutex<HashMap<Nonce, Randomness>>>,
 }
 
-impl<A, B, C> ProposerFactory<A, B, C> {
+impl<A, B, Block: BlockT, C> ProposerFactory<A, B, Block, C> {
 	pub fn new(
 		spawn_handle: impl SpawnNamed + 'static,
 		client: Arc<C>,
 		transaction_pool: Arc<A>,
 		prometheus: Option<&PrometheusRegistry>,
+		start_beacon_height: NumberFor<Block>,
 		randomness_rx: Arc<Mutex<Receiver<Randomness>>>,
 	) -> Self {
 		ProposerFactory {
@@ -60,14 +60,14 @@ impl<A, B, C> ProposerFactory<A, B, C> {
 				transaction_pool,
 				prometheus,
 			),
-			client,
+			start_beacon_height,
 			randomness_rx,
 			available_randomness: Arc::new(Mutex::new(HashMap::new())),
 		}
 	}
 }
 
-impl<A, B, Block, C> sp_consensus::Environment<Block> for ProposerFactory<A, B, C>
+impl<A, B, Block, C> sp_consensus::Environment<Block> for ProposerFactory<A, B, Block, C>
 where
 	A: TransactionPool<Block = Block> + 'static,
 	B: backend::Backend<Block> + Send + Sync + 'static,
@@ -79,8 +79,7 @@ where
 		+ Sync
 		+ 'static,
 	C::Api: ApiExt<Block, StateBackend = backend::StateBackendFor<B, Block>>
-		+ BlockBuilderApi<Block, Error = sp_blockchain::Error>
-		+ RandomnessBeaconApi<Block>,
+		+ BlockBuilderApi<Block, Error = sp_blockchain::Error>,
 {
 	type CreateProposer = future::Ready<Result<Self::Proposer, Self::Error>>;
 	type Proposer = Proposer<B, Block, C, A>;
@@ -89,18 +88,10 @@ where
 	fn init(&mut self, parent_header: &<Block as BlockT>::Header) -> Self::CreateProposer {
 		let parent_number = *parent_header.number();
 		let mut proposer_nonce = None;
-		// TODO should use global constant
-		if let Ok(start_beacon_height) = self
-			.client
-			.runtime_api()
-			.start_beacon_height(&BlockId::Number(parent_number))
-			.map_err(|_| Self::Error::Msg("rutime api call to start_beacon_height".to_string()))
-		{
-			if parent_number + 1.into() >= start_beacon_height {
-				let parent_hash = parent_header.hash();
-				let nonce = <Block as BlockT>::Hash::encode(&parent_hash);
-				proposer_nonce = Some(nonce);
-			}
+		if parent_number + 1.into() >= self.start_beacon_height {
+			let parent_hash = parent_header.hash();
+			let nonce = <Block as BlockT>::Hash::encode(&parent_hash);
+			proposer_nonce = Some(nonce);
 		}
 		future::ready(Ok(Proposer {
 			inner: self

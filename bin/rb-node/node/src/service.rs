@@ -29,6 +29,18 @@ type FullClient = sc_service::TFullClient<Block, RuntimeApi, Executor>;
 type FullBackend = sc_service::TFullBackend<Block>;
 type FullSelectChain = sc_consensus::LongestChain<FullBackend, Block>;
 
+use sp_randomness_beacon::RandomnessBeaconApi;
+fn get_start_height<C>(client: Arc<C>) -> rb_node_runtime::BlockNumber
+where
+	C: sp_api::ProvideRuntimeApi<Block>,
+	C::Api: RandomnessBeaconApi<Block>,
+{
+	client
+		.runtime_api()
+		.start_beacon_height(&sp_runtime::generic::BlockId::Number(0))
+		.unwrap()
+}
+
 pub fn new_partial(
 	config: &Configuration,
 ) -> Result<
@@ -193,6 +205,7 @@ pub fn new_full(config: Configuration) -> Result<TaskManager, ServiceError> {
 			client.clone(),
 			transaction_pool,
 			prometheus_registry.as_ref(),
+			get_start_height(client.clone()),
 			randomness_rx,
 		);
 

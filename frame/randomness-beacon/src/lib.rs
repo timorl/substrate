@@ -224,9 +224,13 @@ mod tests {
 		type SystemWeightInfo = ();
 	}
 	parameter_types! {
-		pub const MinimumPeriod: u64 = 5;
+		pub const StartHeight: u32 = 2;
+
 	}
-	impl Trait for Test {}
+	impl Trait for Test {
+		type StartHeight = StartHeight;
+	}
+
 	type RBeacon = Module<Test>;
 
 	#[test]
