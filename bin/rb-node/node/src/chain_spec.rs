@@ -168,7 +168,7 @@ fn testnet_genesis(
 				.iter()
 				.map(|x| (x.2.clone().into()))
 				.collect(),
-			threshold: initial_authorities.len() as u32 / 3 + 1,
+			threshold: initial_authorities.len() as u64 / 3 + 1,
 		}),
 		pallet_sudo: Some(SudoConfig {
 			// Assign network admin rights.

@@ -11,6 +11,7 @@ use sp_std::vec::Vec;
 use rand::{thread_rng, Rng};
 
 use bls12_381::{G1Affine, G1Projective, G2Affine, Scalar};
+#[cfg(any(feature = "full_crypto", feature = "std"))]
 use pairing::PairingCurveAffine;
 
 #[cfg(any(feature = "full_crypto", feature = "std"))]
@@ -115,19 +116,30 @@ impl VerifyKey {
 	}
 }
 
-#[cfg(any(feature = "full_crypto", feature = "std"))]
+#[derive(Clone)]
 pub struct Pair {
 	secret: Scalar,
 	verify: VerifyKey,
 }
 
-#[cfg(any(feature = "full_crypto", feature = "std"))]
-impl Clone for Pair {
-	fn clone(&self) -> Self {
-		Pair {
-			secret: self.secret.clone(),
-			verify: self.verify.clone(),
+impl Encode for Pair {
+	fn encode_to<T: Output>(&self, dest: &mut T) {
+		Encode::encode_to(&self.secret.to_bytes().to_vec(), dest);
+	}
+}
+
+impl Decode for Pair {
+	fn decode<I: Input>(input: &mut I) -> Result<Self, Error> {
+		let vec = Vec::decode(input)?;
+
+		let mut bytes = [0u8; 32];
+		bytes.copy_from_slice(&vec[..32]);
+		let secret = Scalar::from_bytes(&bytes);
+		if secret.is_none().unwrap_u8() == 1 {
+			return Err("could not decode scalar".into());
 		}
+
+		Ok(Self::from_secret(secret.unwrap()))
 	}
 }
 
@@ -143,14 +155,13 @@ fn scalar_from_seed(seed: [u64; 4]) -> Scalar {
 	Scalar::from_raw(seed)
 }
 
-#[cfg(any(feature = "full_crypto", feature = "std"))]
 impl Pair {
-	#[cfg(any(feature = "full_crypto", feature = "std"))]
 	pub fn from_secret(secret: Scalar) -> Self {
 		let verify = VerifyKey::from_secret(&secret);
 		Pair { secret, verify }
 	}
 
+	#[cfg(any(feature = "full_crypto", feature = "std"))]
 	pub fn generate() -> Self {
 		let secret = random_scalar();
 		Self::from_secret(secret)
@@ -171,6 +182,7 @@ impl Pair {
 		}
 	}
 
+	#[cfg(any(feature = "full_crypto", feature = "std"))]
 	pub fn verify(&self, msg: &Vec<u8>, sgn: &Signature) -> bool {
 		self.verify.verify(msg, sgn)
 	}
@@ -264,27 +276,14 @@ impl RandomnessVerifier {
 	}
 }
 
-#[cfg(any(feature = "full_crypto", feature = "std"))]
 /// A mock for a BLS-based set of threshold keys.
+#[derive(Clone, Encode, Decode)]
 pub struct KeyBox {
 	id: u64,
 	share_provider: Pair,
 	verify_keys: Vec<VerifyKey>,
-	master_key: RandomnessVerifier,
-	threshold: usize,
-}
-
-#[cfg(any(feature = "full_crypto", feature = "std"))]
-impl Clone for KeyBox {
-	fn clone(&self) -> Self {
-		KeyBox {
-			id: self.id.clone(),
-			share_provider: self.share_provider.clone(),
-			verify_keys: self.verify_keys.clone(),
-			master_key: self.master_key.clone(),
-			threshold: self.threshold.clone(),
-		}
-	}
+	master_key: VerifyKey,
+	threshold: u64,
 }
 
 fn lagrange_coef(shares: &Vec<Share>, x: u64) -> Scalar {
@@ -295,7 +294,7 @@ fn lagrange_coef(shares: &Vec<Share>, x: u64) -> Scalar {
 		if share.creator == x {
 			continue;
 		}
-		let p = share.creator;
+		let p = share.creator as u64;
 		num *= Scalar::from(p + 1).neg();
 		if x > p {
 			den *= Scalar::from(x - p);
@@ -309,14 +308,13 @@ fn lagrange_coef(shares: &Vec<Share>, x: u64) -> Scalar {
 
 /// The implementation mocks BLS threshold keys by using a set of ed25519 keys.
 /// To be replaced in Milestone 2.
-#[cfg(any(feature = "full_crypto", feature = "std"))]
 impl KeyBox {
 	pub fn new(
 		id: u64,
 		share_provider: Pair,
 		verify_keys: Vec<VerifyKey>,
-		master_key: RandomnessVerifier,
-		threshold: usize,
+		master_key: VerifyKey,
+		threshold: u64,
 	) -> Self {
 		KeyBox {
 			id,
@@ -327,6 +325,7 @@ impl KeyBox {
 		}
 	}
 
+	#[cfg(any(feature = "full_crypto", feature = "std"))]
 	pub fn generate_share(&self, nonce: &Nonce) -> Share {
 		Share {
 			creator: self.id,
@@ -335,6 +334,7 @@ impl KeyBox {
 		}
 	}
 
+	#[cfg(any(feature = "full_crypto", feature = "std"))]
 	pub fn verify_share(&self, share: &Share) -> bool {
 		self.verify_keys[share.creator as usize].verify(&share.nonce, &share.data)
 	}
@@ -355,15 +355,16 @@ impl KeyBox {
 		}
 	}
 
+	#[cfg(any(feature = "full_crypto", feature = "std"))]
 	pub fn verify_randomness(&self, randomness: &Randomness) -> bool {
-		self.master_key.verify(randomness)
+		self.master_key.verify(&randomness.nonce, &randomness.data)
 	}
 
 	pub fn n_members(&self) -> usize {
 		self.verify_keys.len()
 	}
 
-	pub fn threshold(&self) -> usize {
+	pub fn threshold(&self) -> u64 {
 		self.threshold
 	}
 }
@@ -401,13 +402,23 @@ mod tests {
 	}
 
 	#[test]
+	fn encode_decode_pair() {
+		let secret = random_scalar();
+		let pair = Pair::from_secret(secret);
+
+		let decoded = Pair::decode(&mut &pair.encode()[..]);
+		assert!(decoded.is_ok());
+		assert_eq!(decoded.unwrap(), pair);
+	}
+
+	#[test]
 	fn encode_decode_signature() {
 		let scalar = random_scalar();
 		let sig = Signature {
 			0: G1Affine::from(G1Affine::generator() * scalar),
 		};
 
-		let decoded = Signature::decode(&mut &Signature::encode(&sig)[..]);
+		let decoded = Signature::decode(&mut &sig.encode()[..]);
 		assert!(decoded.is_ok());
 		assert_eq!(decoded.unwrap(), sig);
 	}
@@ -433,7 +444,6 @@ mod tests {
 		for id in 0usize..n_members {
 			verifiers.push(share_providers[id].verify_key());
 		}
-		let master_key = RandomnessVerifier::new(master_key);
 
 		let mut kbs = Vec::new();
 		for id in 0..n_members {
@@ -442,7 +452,7 @@ mod tests {
 				share_providers[id].clone(),
 				verifiers.clone(),
 				master_key.clone(),
-				threshold,
+				threshold as u64,
 			))
 		}
 

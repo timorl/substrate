@@ -4,7 +4,7 @@ use codec::{Decode, Encode, EncodeLike, Error, Input, Output};
 use sp_core::crypto::KeyTypeId;
 use sp_std::vec::Vec;
 
-pub use sp_randomness_beacon::VerifyKey;
+pub use sp_randomness_beacon::{KeyBox, Pair, VerifyKey};
 
 pub use bls12_381::Scalar;
 use bls12_381::{G1Affine, G2Affine, G2Projective};
@@ -68,8 +68,8 @@ impl Decode for EncryptionPublicKey {
 		let mut bytes = [0u8; 96];
 		bytes.copy_from_slice(&vec[48..48 + 96]);
 		let g2point = G2Affine::from_compressed(&bytes);
-		if g1point.is_none().unwrap_u8() == 1 {
-			return Err("could not decode G1Affine point".into());
+		if g2point.is_none().unwrap_u8() == 1 {
+			return Err("could not decode G2Affine point".into());
 		}
 		Ok(EncryptionPublicKey {
 			g1point: g1point.unwrap(),
@@ -110,7 +110,7 @@ impl Commitment {
 		}
 	}
 
-	pub fn derive_mvk(comms: Vec<Commitment>) -> VerifyKey {
+	pub fn derive_key(comms: Vec<Commitment>) -> VerifyKey {
 		let g2point = comms
 			.into_iter()
 			.map(|c| G2Projective::from(c.g2point))
@@ -119,6 +119,18 @@ impl Commitment {
 
 		// TODO refactor
 		VerifyKey::decode(&mut &Commitment { g2point }.encode()[..]).unwrap()
+	}
+
+	pub fn poly_eval(coeffs: &Vec<Self>, x: &Scalar) -> Self {
+		let mut eval = G2Projective::identity();
+		for coeff in coeffs.iter().map(|c| G2Projective::from(c.g2point)) {
+			eval *= x;
+			eval += coeff;
+		}
+
+		Commitment {
+			g2point: G2Affine::from(eval),
+		}
 	}
 }
 
@@ -149,7 +161,7 @@ impl EncodeLike for Commitment {}
 sp_api::decl_runtime_apis! {
 	pub trait DKGApi {
 		fn master_verification_key() -> Option<VerifyKey>;
-		fn threshold_secret_key() -> Option<[u64; 4]>;
+		fn raw_key_box() -> Option<Vec<u8>>;
 		fn final_round() -> u32;
 	}
 }
@@ -176,7 +188,7 @@ mod tests {
 		let raw_scalar = [1, 7, 2, 9];
 		let key = EncryptionPublicKey::from_raw_scalar(raw_scalar);
 
-		let decoded = EncryptionPublicKey::decode(&mut &EncryptionPublicKey::encode(&key)[..]);
+		let decoded = EncryptionPublicKey::decode(&mut &key.encode()[..]);
 		assert!(decoded.is_ok());
 		assert_eq!(decoded.unwrap(), key);
 	}
@@ -186,7 +198,7 @@ mod tests {
 		let coef = Scalar::from_raw([1, 7, 2, 9]);
 		let comm = Commitment::new(coef);
 
-		let decoded = Commitment::decode(&mut &Commitment::encode(&comm)[..]);
+		let decoded = Commitment::decode(&mut &comm.encode()[..]);
 		assert!(decoded.is_ok());
 		assert_eq!(decoded.unwrap(), comm);
 	}

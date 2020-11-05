@@ -17,6 +17,7 @@
 
 #![cfg_attr(not(feature = "std"), no_std)]
 
+use codec::Encode;
 use frame_support::{debug, decl_module, decl_storage, traits::Get, Parameter};
 use frame_system::{
 	ensure_signed,
@@ -29,7 +30,7 @@ use sp_runtime::{
 };
 use sp_std::{convert::TryInto, vec::Vec};
 
-use sp_dkg::{Commitment, EncryptionKey, EncryptionPublicKey, Scalar, VerifyKey};
+use sp_dkg::{Commitment, EncryptionKey, EncryptionPublicKey, KeyBox, Pair, Scalar, VerifyKey};
 
 // TODO handle the situation when the node is not an authority
 
@@ -176,17 +177,18 @@ decl_storage! {
 
 		// round 3
 		pub MasterVerificationKey: VerifyKey;
+		VerificationKeys get(fn verification_keys): Vec<VerifyKey>;
 
 
 		/// The current authorities
 		pub Authorities get(fn authorities): Vec<T::AuthorityId>;
 
 		/// The threshold of BLS scheme
-		pub Threshold: u32;
+		pub Threshold: u64;
 	}
 	add_extra_genesis {
 		config(authorities): Vec<T::AuthorityId>;
-		config(threshold): u32;
+		config(threshold): u64;
 		build(|config| {
 			Module::<T>::init_store(&config.authorities);
 			Module::<T>::set_threshold(config.threshold);
@@ -287,7 +289,7 @@ decl_module! {
 
 		// TODO maybe it should be an event?
 		#[weight = 0]
-		pub fn post_master_verification_key(origin, mvk: VerifyKey, hash_round2: T::Hash) {
+		pub fn post_verification_keys(origin, mvk: VerifyKey, vks: Vec<VerifyKey>, hash_round2: T::Hash) {
 			debug::RuntimeLogger::init();
 
 			let now = <frame_system::Module<T>>::block_number();
@@ -295,10 +297,11 @@ decl_module! {
 
 			match Self::authority_index(who){
 				Some(ix) => {
-					debug::info!("DKG POST_MASTER_KEY FROM: {:?} block {:?}", ix, now);
+					debug::info!("DKG POST_VERIFICATION_KEYS FROM: {:?} block {:?}", ix, now);
 					MasterVerificationKey::put(mvk);
+					VerificationKeys::put(vks);
 				}
-				None =>  debug::info!("DKG POST_MASTER_KEY FAILED FIND AUTH"),
+				None =>  debug::info!("DKG POST_VERIFICATION_KEYS FAILED FIND AUTH"),
 			}
 
 		}
@@ -344,10 +347,10 @@ impl<T: Trait> Module<T> {
 		}
 	}
 
-	fn set_threshold(threshold: u32) {
+	fn set_threshold(threshold: u64) {
 		let n_members = Self::authorities().len();
 		assert!(
-			0 < threshold && threshold <= n_members as u32,
+			0 < threshold && threshold <= n_members as u64,
 			"Wrong threshold or n_members"
 		);
 		debug::info!(
@@ -622,7 +625,7 @@ impl<T: Trait> Module<T> {
 		// 0. Check if there are enough qualified nodes
 		let threshold = Threshold::get();
 		let qualified = Self::is_correct_dealer();
-		let n_qualified = qualified.iter().map(|&v| v as u32).sum::<u32>();
+		let n_qualified = qualified.iter().map(|&v| v as u64).sum::<u64>();
 		assert!(
 			n_qualified >= threshold,
 			"not enough qualified nodes: needs at least {}, got {}",
@@ -683,17 +686,28 @@ impl<T: Trait> Module<T> {
 			return;
 		}
 
-		// 2. derive and post verification master key
+		// 2. derive and post master key and verification keys
 		let comms = Self::committed_polynomilas()
 			.into_iter()
 			.enumerate()
-			.filter_map(|(ix, comms)| match (qualified[ix], comms.is_empty()) {
-				(false, _) | (true, true) => None,
-				(true, false) => Some(comms[0].clone()),
-			})
+			.filter(|(ix, comms)| qualified[*ix] && !comms.is_empty())
+			.map(|(_, comms)| comms[0].clone())
 			.collect();
 
-		let mvk = Commitment::derive_mvk(comms);
+		let mvk = Commitment::derive_key(comms);
+
+		let n_members = Self::authorities().len();
+		let mut vks = Vec::new();
+		for ix in 0..n_members {
+			let x = &Scalar::from_raw([ix as u64 + 1, 0, 0, 0]);
+			let part_keys = (0..n_members)
+				.filter(|dealer| {
+					qualified[*dealer] && !Self::committed_polynomilas()[*dealer].is_empty()
+				})
+				.map(|dealer| Commitment::poly_eval(&Self::committed_polynomilas()[dealer], x))
+				.collect();
+			vks.push(Commitment::derive_key(part_keys))
+		}
 
 		let round2_number: T::BlockNumber = T::RoundEnds::get()[2].into();
 		let hash_round2 = <frame_system::Module<T>>::block_hash(round2_number);
@@ -706,7 +720,7 @@ impl<T: Trait> Module<T> {
 		}
 
 		let tx_res = signer.send_signed_transaction(|_| {
-			Call::post_master_verification_key(mvk.clone(), hash_round2)
+			Call::post_verification_keys(mvk.clone(), vks.clone(), hash_round2)
 		});
 
 		for (acc, res) in &tx_res {
@@ -766,11 +780,20 @@ impl<T: Trait> Module<T> {
 		}
 	}
 
-	pub fn threshold_secret_key() -> Option<[u64; 4]> {
-		match StorageValueRef::persistent(b"dkw::threshold_secret_key").get() {
-			None | Some(None) => None,
-			Some(Some(raw_key)) => Some(raw_key),
-		}
+	pub fn raw_key_box() -> Option<Vec<u8>> {
+		let share_provider = match StorageValueRef::persistent(b"dkw::threshold_secret_key").get() {
+			None | Some(None) => return None,
+			Some(Some(raw_key)) => Pair::from_secret(Scalar::from_raw(raw_key)),
+		};
+		let ix = match Self::local_authority_key() {
+			None => return None,
+			Some((my_ix, _)) => my_ix as u64,
+		};
+		let verify_keys = VerificationKeys::get();
+		let master_key = MasterVerificationKey::get();
+		let threshold = Threshold::get();
+
+		Some(KeyBox::new(ix, share_provider, verify_keys, master_key, threshold).encode())
 	}
 
 	pub fn final_round() -> u32 {
@@ -798,7 +821,7 @@ fn gen_raw_scalar() -> [u64; 4] {
 	u8_array_to_u64_array(sp_io::offchain::random_seed())
 }
 
-fn gen_poly_coeffs(deg: u32) -> Vec<[u64; 4]> {
+fn gen_poly_coeffs(deg: u64) -> Vec<[u64; 4]> {
 	let mut coeffs = Vec::new();
 	for _ in 0..deg + 1 {
 		coeffs.push(gen_raw_scalar());

@@ -20,7 +20,7 @@ use sc_network_gossip::{
 
 use sp_runtime::traits::Block as BlockT;
 
-use sp_randomness_beacon::{KeyBox, Nonce, Randomness, RandomnessVerifier, Share, VerifyKey};
+use sp_randomness_beacon::{KeyBox, Nonce, Randomness, Share, VerifyKey};
 
 use futures::{channel::mpsc::Receiver, prelude::*};
 use parking_lot::Mutex;
@@ -31,8 +31,6 @@ use std::{
 	task::{Context, Poll},
 	time,
 };
-
-
 
 const RANDOMNESS_BEACON_ID: [u8; 4] = *b"rndb";
 const RB_PROTOCOL_NAME: &'static str = "/randomness_beacon";
@@ -71,8 +69,6 @@ pub enum Error {
 	Network(String),
 	Signing(String),
 }
-
-
 
 /// Validator of the messages received via gossip.
 /// It only needs to check that the received data corresponds to a share
@@ -123,7 +119,7 @@ impl<B: BlockT> OutgoingMessage<B> {
 }
 
 pub struct RandomnessGossip<B: BlockT> {
-	threshold: usize,
+	threshold: u64,
 	topics: HashMap<
 		B::Hash,
 		(
@@ -145,7 +141,7 @@ impl<B: BlockT> Unpin for RandomnessGossip<B> {}
 impl<B: BlockT> RandomnessGossip<B> {
 	pub fn new<N: Network<B> + Send + Clone + 'static>(
 		id: String,
-		threshold: usize,
+		threshold: u64,
 		randomness_nonce_rx: Receiver<Nonce>,
 		network: N,
 		randomness_tx: Option<Sender<Randomness>>,
@@ -164,7 +160,7 @@ impl<B: BlockT> RandomnessGossip<B> {
 		let verify_keys = vec![ap.verify_key(), bp.verify_key()];
 
 		let (id, share_provider) = if id == "Alice" { (0, ap) } else { (1, bp) };
-		let master_key = RandomnessVerifier::new(VerifyKey::default());
+		let master_key = VerifyKey::default();
 
 		let keybox = KeyBox::new(
 			id as u64,
@@ -230,7 +226,6 @@ impl<B: BlockT> RandomnessGossip<B> {
 impl<B: BlockT> Future for RandomnessGossip<B> {
 	type Output = ();
 
-
 	/// A future is implemented which intertwines receiving new messages
 	/// with periodically sending out outgoing messages. Apart from that
 	/// it checks whether new notifications about blocks are received from
@@ -289,7 +284,7 @@ impl<B: BlockT> Future for RandomnessGossip<B> {
 					if keybox.verify_share(&share) {
 						shares.push(share);
 						// TODO: the following needs an overhaul
-						if shares.len() == threshold {
+						if shares.len() == threshold as usize {
 							let randomness = keybox.combine_shares(shares);
 
 							// When randomness succesfully combined, notify block proposer

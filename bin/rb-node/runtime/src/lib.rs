@@ -497,8 +497,8 @@ impl_runtime_apis! {
 			DKG::master_verification_key()
 		}
 
-		fn threshold_secret_key() -> Option<[u64; 4]> {
-			DKG::threshold_secret_key()
+		fn raw_key_box() -> Option<Vec<u8>> {
+			DKG::raw_key_box()
 		}
 
 		fn final_round() -> u32 {
