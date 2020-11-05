@@ -21,7 +21,6 @@ use sp_runtime::traits::NumberFor;
 sp_api::decl_runtime_apis! {
 	pub trait RandomnessBeaconApi {
 		fn start_beacon_height() -> NumberFor<Block> ;
-		fn set_master_key(master_key: VerifyKey) -> bool;
 	}
 }
 

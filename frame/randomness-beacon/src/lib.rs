@@ -30,7 +30,7 @@
 
 use codec::{Decode, Encode};
 use frame_support::{
-	decl_error, decl_module, decl_storage, traits::Get, traits::Randomness as RandomnessT,
+	debug, decl_error, decl_module, decl_storage, traits::Get, traits::Randomness as RandomnessT,
 	weights::Weight,
 };
 use frame_system::ensure_none;
@@ -42,7 +42,8 @@ use sp_randomness_beacon::{
 use sp_std::{result, vec::Vec};
 
 pub trait Trait: frame_system::Trait {
-	type StartHeight: Get<u32>;
+	type StartHeight: Get<Self::BlockNumber>;
+	type MasterKey: Get<Option<VerifyKey>>;
 }
 
 decl_storage! {
@@ -67,9 +68,10 @@ decl_module! {
 		type Error = Error<T>;
 
 		fn on_initialize(now: T::BlockNumber) -> Weight {
-			if !<Self as Store>::RandomnessVerifier::exists() {
-				// TODO: this add default verify_key, refactor to add the proper one
-				 <Self as Store>::RandomnessVerifier::set(sp_randomness_beacon::VerifyKey::default());
+			if now == T::StartHeight::get() {
+				assert!(!RandomnessVerifier::exists());
+				assert!(Self::set_master_key());
+				debug::info!("\n\nsetting master key {:?} block {:?}\n\n", Self::verifier(), now);
 			}
 
 			0
@@ -81,7 +83,7 @@ decl_module! {
 
 			assert!(!<Self as Store>::DidUpdate::exists(), "Randomness must be set only once in the block");
 
-			<Self as Store>::Seed::set(random_bytes);
+			<Self as Store>::Seed::put(random_bytes);
 			<Self as Store>::DidUpdate::put(true);
 		}
 
@@ -98,8 +100,13 @@ impl<T: Trait> Module<T> {
 		T::StartHeight::get().into()
 	}
 
-	pub fn set_master_key(_master_key: VerifyKey) -> bool {
-		true
+	fn set_master_key() -> bool {
+		if let Some(mk) = T::MasterKey::get() {
+			RandomnessVerifier::put(mk);
+			return true;
+		}
+
+		false
 	}
 }
 
@@ -128,7 +135,7 @@ impl<T: Trait> ProvideInherent for Module<T> {
 	/// for the current block. This seed is provided to the pallet via inherent data.
 	fn create_inherent(data: &InherentData) -> Option<Self::Call> {
 		let now = <frame_system::Module<T>>::block_number();
-		if now >= T::BlockNumber::from(T::StartHeight::get()) {
+		if now >= T::StartHeight::get() {
 			return Some(Self::Call::set_random_bytes(extract_random_bytes(data)));
 		}
 		None
@@ -138,10 +145,10 @@ impl<T: Trait> ProvideInherent for Module<T> {
 	/// a correct randomness seed for the current block.
 	fn check_inherent(call: &Self::Call, _: &InherentData) -> result::Result<(), Self::Error> {
 		let now = <frame_system::Module<T>>::block_number();
-		if now < T::BlockNumber::from(T::StartHeight::get()) {
+		if now < T::StartHeight::get() {
 			return Ok(());
 		}
-		if !<Self as Store>::RandomnessVerifier::exists() {
+		if !RandomnessVerifier::exists() {
 			return Err(sp_randomness_beacon::inherents::InherentError::VerifyKeyNotSet);
 		}
 		let random_bytes = match call {
@@ -167,7 +174,7 @@ impl<T: Trait> RandomnessT<T::Hash> for Module<T> {
 #[cfg(test)]
 mod tests {
 	use super::*;
-	use frame_support::traits::{OnFinalize, OnInitialize};
+	use frame_support::traits::{Get, OnFinalize, OnInitialize};
 	use frame_support::{assert_ok, impl_outer_origin, parameter_types, weights::Weight};
 	use sp_core::H256;
 	use sp_io::TestExternalities;
@@ -190,12 +197,14 @@ mod tests {
 
 	#[derive(Clone, Eq, PartialEq)]
 	pub struct Test;
+
 	parameter_types! {
 		pub const BlockHashCount: u64 = 250;
 		pub const MaximumBlockWeight: Weight = 1024;
 		pub const MaximumBlockLength: u32 = 2 * 1024;
 		pub const AvailableBlockRatio: Perbill = Perbill::one();
 	}
+
 	impl frame_system::Trait for Test {
 		type BaseCallFilter = ();
 		type Origin = Origin;
@@ -223,12 +232,20 @@ mod tests {
 		type OnKilledAccount = ();
 		type SystemWeightInfo = ();
 	}
-	parameter_types! {
-		pub const StartHeight: u32 = 2;
 
+	parameter_types! {
+		pub const StartHeight: <Test as frame_system::Trait>::BlockNumber = 2;
+	}
+
+	pub struct GetMasterKey;
+	impl Get<Option<VerifyKey>> for GetMasterKey {
+		fn get() -> Option<VerifyKey> {
+			Some(VerifyKey::default())
+		}
 	}
 	impl Trait for Test {
 		type StartHeight = StartHeight;
+		type MasterKey = GetMasterKey;
 	}
 
 	type RBeacon = Module<Test>;
@@ -260,7 +277,7 @@ mod tests {
 	#[test]
 	fn verifier_correctly_initialized() {
 		new_test_ext().execute_with(|| {
-			assert_eq!(RBeacon::on_initialize(0), 0);
+			assert_eq!(RBeacon::on_initialize(StartHeight::get()), 0);
 			assert!(<RBeacon as Store>::RandomnessVerifier::exists());
 		});
 	}

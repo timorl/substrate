@@ -29,7 +29,7 @@ use sp_version::RuntimeVersion;
 // A few exports that help ease life for downstream crates.
 pub use frame_support::{
 	construct_runtime, debug, parameter_types,
-	traits::{KeyOwnerProofSystem, Randomness},
+	traits::{Get, KeyOwnerProofSystem, Randomness},
 	weights::{
 		constants::{BlockExecutionWeight, ExtrinsicBaseWeight, RocksDbWeight, WEIGHT_PER_SECOND},
 		IdentityFee, Weight,
@@ -279,8 +279,19 @@ parameter_types! {
 	pub const StartHeight: u32 = 9;
 }
 
+pub struct GetMasterKey;
+impl Get<Option<sp_randomness_beacon::VerifyKey>> for GetMasterKey {
+	fn get() -> Option<sp_randomness_beacon::VerifyKey> {
+		if pallet_dkg::MasterVerificationKey::exists() {
+			return Some(pallet_dkg::MasterVerificationKey::get());
+		}
+		None
+	}
+}
+
 impl pallet_randomness_beacon::Trait for Runtime {
 	type StartHeight = StartHeight;
+	type MasterKey = GetMasterKey;
 }
 
 impl<LocalCall> frame_system::offchain::CreateSignedTransaction<LocalCall> for Runtime
@@ -498,10 +509,6 @@ impl_runtime_apis! {
 	impl sp_randomness_beacon::RandomnessBeaconApi<Block> for Runtime {
 		fn start_beacon_height() -> NumberFor<Block> {
 			RandomnessBeacon::start_height()
-		}
-
-		fn set_master_key(master_key: sp_randomness_beacon::VerifyKey) -> bool {
-			RandomnessBeacon::set_master_key(master_key)
 		}
 	}
 

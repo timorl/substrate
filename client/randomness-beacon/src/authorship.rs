@@ -280,6 +280,7 @@ mod tests {
 			client.clone(),
 			txpool.clone(),
 			None,
+			2u64,
 			wrapped_rx,
 		);
 
@@ -325,6 +326,7 @@ mod tests {
 			client.clone(),
 			txpool.clone(),
 			None,
+			2u64,
 			wrapped_rx,
 		);
 
@@ -384,6 +386,7 @@ mod tests {
 			client.clone(),
 			txpool.clone(),
 			None,
+			2u64,
 			wrapped_rx,
 		);
 

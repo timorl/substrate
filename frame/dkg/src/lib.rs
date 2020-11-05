@@ -175,7 +175,7 @@ decl_storage! {
 
 
 		// round 3
-		MasterVerificationKey: VerifyKey;
+		pub MasterVerificationKey: VerifyKey;
 
 
 		/// The current authorities
