@@ -71,7 +71,7 @@ decl_module! {
 			if now == T::StartHeight::get() {
 				assert!(!RandomnessVerifier::exists());
 				assert!(Self::set_master_key());
-				debug::info!("\n\nsetting master key {:?} block {:?}\n\n", Self::verifier(), now);
+				debug::info!("RNDB setting master key {:?} block {:?}", Self::verifier(), now);
 			}
 
 			0

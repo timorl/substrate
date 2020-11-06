@@ -276,7 +276,7 @@ impl pallet_dkg::Trait for Runtime {
 }
 
 parameter_types! {
-	pub const StartHeight: u32 = 9;
+	pub const StartHeight: u32 = 10;
 }
 
 pub struct GetMasterKey;

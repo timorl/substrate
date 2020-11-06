@@ -11,10 +11,8 @@ use sp_std::vec::Vec;
 use rand::{thread_rng, Rng};
 
 use bls12_381::{G1Affine, G1Projective, G2Affine, Scalar};
-#[cfg(any(feature = "full_crypto", feature = "std"))]
 use pairing::PairingCurveAffine;
 
-#[cfg(any(feature = "full_crypto", feature = "std"))]
 use sha3::{Digest, Sha3_256};
 
 use sp_runtime::traits::NumberFor;
@@ -75,9 +73,8 @@ impl Decode for VerifyKey {
 	}
 }
 
-// TODO this is a mock till a key box and randomness_verifier are not incorporated into pallet
-pub fn verify_randomness(_verify_key: &VerifyKey, _randomness: &Randomness) -> bool {
-	true
+pub fn verify_randomness(verify_key: &VerifyKey, randomness: &Randomness) -> bool {
+	verify_key.verify(&randomness.nonce, &randomness.data)
 }
 
 #[cfg(feature = "std")]
@@ -101,7 +98,6 @@ impl EncodeLike for VerifyKey {}
 pub type Nonce = Vec<u8>;
 
 impl VerifyKey {
-	#[cfg(any(feature = "full_crypto", feature = "std"))]
 	fn verify(&self, msg: &Vec<u8>, sgn: &Signature) -> bool {
 		let p1 = sgn.0.pairing_with(&G2Affine::generator());
 		let p2 = hash_to_curve(msg).pairing_with(&self.point);
@@ -116,7 +112,7 @@ impl VerifyKey {
 	}
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Pair {
 	secret: Scalar,
 	verify: VerifyKey,
@@ -371,7 +367,6 @@ impl KeyBox {
 
 // TODO: this hashing function gen ^ hash(nonce) is not secure as the log is known for the result.
 // Change to try-and-increment or a deterministic one at the earliest convinience.
-#[cfg(any(feature = "full_crypto", feature = "std"))]
 pub fn hash_to_curve(nonce: &Vec<u8>) -> G1Affine {
 	let mut hasher = Sha3_256::new();
 	hasher.input(nonce);
