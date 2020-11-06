@@ -265,18 +265,29 @@ impl pallet_sudo::Trait for Runtime {
 	type Call = Call;
 }
 
+// assume round legth = info propagation time to be 2 blocks
+// after 8th block an offchain worker is run that will submit master key
+// after 10th block the master key is in dkg pallet's storage so raw_key_box may be extracted and
+// RandomnessGossip may start collecting randomness shares for nonce=hash of block of number >= 11
+//
+const ROUNDS_ENDS: [u32; 4] = [2, 4, 6, 8];
+const MASTER_KEY_READY: u32 = 10;
+const START_HEIGHT: u32 = 11;
+
 parameter_types! {
-	pub const RoundEnds: [u32; 4] = [2,4,6,8];
+	pub const RoundEnds: [u32; 4] = ROUNDS_ENDS;
+	pub const MasterKeyReady: u32 = MASTER_KEY_READY;
 }
 
 impl pallet_dkg::Trait for Runtime {
 	type Call = Call;
 	type AuthorityId = pallet_dkg::crypto::DKGId;
 	type RoundEnds = RoundEnds;
+	type MasterKeyReady = MasterKeyReady;
 }
 
 parameter_types! {
-	pub const StartHeight: u32 = 10;
+	pub const StartHeight: u32 = START_HEIGHT;
 }
 
 pub struct GetMasterKey;
@@ -501,14 +512,18 @@ impl_runtime_apis! {
 			DKG::raw_key_box()
 		}
 
-		fn final_round() -> u32 {
-			DKG::final_round()
+		fn master_key_ready() -> NumberFor<Block> {
+			DKG::master_key_ready()
+		}
+
+		fn threshold() -> u64 {
+			DKG::threshold()
 		}
 	}
 
 	impl sp_randomness_beacon::RandomnessBeaconApi<Block> for Runtime {
 		fn start_beacon_height() -> NumberFor<Block> {
-			RandomnessBeacon::start_height()
+			RandomnessBeacon::start_beacon_height()
 		}
 	}
 

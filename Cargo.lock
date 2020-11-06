@@ -7386,6 +7386,7 @@ dependencies = [
  "sp-consensus",
  "sp-consensus-babe",
  "sp-core",
+ "sp-dkg",
  "sp-inherents",
  "sp-keyring",
  "sp-randomness-beacon",

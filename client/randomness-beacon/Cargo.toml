@@ -33,6 +33,7 @@ serde_json = "1.0.41"
 sc-client-api = { version = "2.0.0", path = "../api" }
 sp-inherents = { version = "2.0.0", path = "../../primitives/inherents" }
 sp-blockchain = { version = "2.0.0", path = "../../primitives/blockchain" }
+sp-dkg= { version = "0.1.0", path = "../../primitives/dkg" }
 sp-randomness-beacon= { version = "0.1.0", path = "../../primitives/randomness-beacon" }
 sc-proposer-metrics = { version = "0.8.0", path = "../proposer-metrics" }
 sc-network = { version = "0.8.0", path = "../network" }

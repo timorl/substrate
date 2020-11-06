@@ -2,6 +2,7 @@
 
 use codec::{Decode, Encode, EncodeLike, Error, Input, Output};
 use sp_core::crypto::KeyTypeId;
+use sp_runtime::traits::NumberFor;
 use sp_std::vec::Vec;
 
 pub use sp_randomness_beacon::{KeyBox, Pair, VerifyKey};
@@ -162,7 +163,8 @@ sp_api::decl_runtime_apis! {
 	pub trait DKGApi {
 		fn master_verification_key() -> Option<VerifyKey>;
 		fn raw_key_box() -> Option<Vec<u8>>;
-		fn final_round() -> u32;
+		fn master_key_ready() -> NumberFor<Block>;
+		fn threshold() -> u64;
 	}
 }
 

@@ -71,7 +71,7 @@ decl_module! {
 			if now == T::StartHeight::get() {
 				assert!(!RandomnessVerifier::exists());
 				assert!(Self::set_master_key());
-				debug::info!("RNDB setting master key {:?} block {:?}", Self::verifier(), now);
+				debug::info!("RNDB setting master key at block {:?}", now);
 			}
 
 			0
@@ -96,8 +96,8 @@ decl_module! {
 }
 
 impl<T: Trait> Module<T> {
-	pub fn start_height() -> T::BlockNumber {
-		T::StartHeight::get().into()
+	pub fn start_beacon_height() -> T::BlockNumber {
+		T::StartHeight::get()
 	}
 
 	fn set_master_key() -> bool {

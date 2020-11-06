@@ -12,6 +12,7 @@ use sc_finality_grandpa::{
 use sc_service::{error::Error as ServiceError, Configuration, TaskManager};
 use sp_consensus_aura::sr25519::AuthorityPair as AuraPair;
 use sp_inherents::InherentDataProviders;
+use sp_runtime::generic::BlockId;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -37,8 +38,17 @@ where
 {
 	client
 		.runtime_api()
-		.start_beacon_height(&sp_runtime::generic::BlockId::Number(0))
+		.start_beacon_height(&BlockId::Number(0))
 		.unwrap()
+}
+
+use sp_dkg::DKGApi;
+fn get_threshold<C>(client: Arc<C>) -> u64
+where
+	C: sp_api::ProvideRuntimeApi<Block>,
+	C::Api: DKGApi<Block>,
+{
+	client.runtime_api().threshold(&BlockId::Number(0)).unwrap()
 }
 
 pub fn new_partial(
@@ -232,14 +242,12 @@ pub fn new_full(config: Configuration) -> Result<TaskManager, ServiceError> {
 			.spawn_blocking("aura", aura);
 	}
 
-	// TODO: should be read from config
-	let threshold = 2;
 	let rg = RandomnessGossip::new(
-		name.clone(),
-		threshold,
+		get_threshold(client.clone()),
 		randomness_nonce_rx,
 		network.clone(),
 		randomness_tx,
+		client.clone(),
 	);
 
 	task_manager.spawn_handle().spawn("randomness gossip", rg);

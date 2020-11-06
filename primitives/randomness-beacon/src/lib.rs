@@ -14,13 +14,12 @@ use bls12_381::{G1Affine, G1Projective, G2Affine, Scalar};
 use pairing::PairingCurveAffine;
 
 use sha3::{Digest, Sha3_256};
-
 use sp_runtime::traits::NumberFor;
 
 sp_api::decl_runtime_apis! {
-	pub trait RandomnessBeaconApi {
-		fn start_beacon_height() -> NumberFor<Block> ;
-	}
+	   pub trait RandomnessBeaconApi {
+			   fn start_beacon_height() -> NumberFor<Block> ;
+	   }
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -77,22 +76,6 @@ pub fn verify_randomness(verify_key: &VerifyKey, randomness: &Randomness) -> boo
 	verify_key.verify(&randomness.nonce, &randomness.data)
 }
 
-#[cfg(feature = "std")]
-pub fn alice_bob_pairs() -> (Pair, Pair) {
-	let secret = Scalar::from(1);
-	let alice_pair = Pair {
-		secret,
-		verify: VerifyKey::from_secret(&secret),
-	};
-	let secret = Scalar::from(2);
-	let bob_pair = Pair {
-		secret,
-		verify: VerifyKey::from_secret(&secret),
-	};
-
-	(alice_pair, bob_pair)
-}
-
 impl EncodeLike for VerifyKey {}
 
 pub type Nonce = Vec<u8>;
@@ -112,7 +95,7 @@ impl VerifyKey {
 	}
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Default)]
 pub struct Pair {
 	secret: Scalar,
 	verify: VerifyKey,
@@ -273,7 +256,7 @@ impl RandomnessVerifier {
 }
 
 /// A mock for a BLS-based set of threshold keys.
-#[derive(Clone, Encode, Decode)]
+#[derive(Clone, Encode, Decode, Default)]
 pub struct KeyBox {
 	id: u64,
 	share_provider: Pair,

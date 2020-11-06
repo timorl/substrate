@@ -20,8 +20,6 @@ use sp_randomness_beacon::Nonce;
 use sp_runtime::{generic::BlockId, traits::Block as BlockT};
 use std::{collections::HashMap, marker, sync::Arc};
 
-
-
 #[derive(derive_more::Display, Debug)]
 pub enum Error {
 	TransmitErr,
@@ -79,11 +77,7 @@ where
 	// Returns None is hash was already processed.
 	fn hash_to_nonce(&mut self, hash: <B as BlockT>::Hash) -> Option<Nonce> {
 		// Check if hash was already processed
-		// TODO: is this check enough?
-		match self.client.status(BlockId::Hash(hash)) {
-			Ok(sp_blockchain::BlockStatus::InChain) => return None,
-			_ => {}
-		}
+		// TODO: add some check if we already processed the hash
 		let nonce = <B as BlockT>::Hash::encode(&hash);
 		match self.random_bytes_buf.get(&nonce) {
 			Some(_) => return None,
@@ -107,7 +101,6 @@ where
 		self.inner.check_block(block).map_err(Into::into)
 	}
 
-
 	/// Here we send a notification through self.randomness_nonce_tx that a new block
 	/// have been imported.
 	fn import_block(
@@ -115,7 +108,19 @@ where
 		block: BlockImportParams<B, Self::Transaction>,
 		new_cache: HashMap<CacheKeyId, Vec<u8>>,
 	) -> Result<ImportResult, Self::Error> {
-		if let Some(nonce) = self.hash_to_nonce(block.post_hash()) {
+		let block_hash = block.post_hash();
+		let res = self
+			.inner
+			.import_block(block, new_cache)
+			.map_err(Into::into);
+
+		if res.is_err() {
+			info!(target: "import", "error when importing to inner {:?}", res);
+			return res;
+		}
+
+		info!(target: "import", "succesfully imported to inner {:?}", res);
+		if let Some(nonce) = self.hash_to_nonce(block_hash) {
 			if let Err(err) = self.randomness_nonce_tx.try_send(nonce.clone()) {
 				info!(target: "import", "error when try_send topic through notifier {}", err);
 				return Err(Error::TransmitErr.into());
@@ -123,10 +128,7 @@ where
 			self.random_bytes_buf.insert(nonce, None);
 		}
 
-		// TODO: maybe first check if we can import the block, and then start collecting shares
-		self.inner
-			.import_block(block, new_cache)
-			.map_err(Into::into)
+		res
 	}
 }
 

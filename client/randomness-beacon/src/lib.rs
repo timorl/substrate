@@ -18,9 +18,10 @@ use sc_network_gossip::{
 	GossipEngine, Network, TopicNotification, ValidationResult, Validator, ValidatorContext,
 };
 
-use sp_runtime::traits::Block as BlockT;
+use sp_runtime::{generic::BlockId, traits::Block as BlockT};
 
-use sp_randomness_beacon::{KeyBox, Nonce, Randomness, Share, VerifyKey};
+use sp_dkg::DKGApi;
+use sp_randomness_beacon::{KeyBox, Nonce, Randomness, Share};
 
 use futures::{channel::mpsc::Receiver, prelude::*};
 use parking_lot::Mutex;
@@ -118,7 +119,7 @@ impl<B: BlockT> OutgoingMessage<B> {
 	}
 }
 
-pub struct RandomnessGossip<B: BlockT> {
+pub struct RandomnessGossip<B: BlockT, C> {
 	threshold: u64,
 	topics: HashMap<
 		B::Hash,
@@ -129,22 +130,23 @@ pub struct RandomnessGossip<B: BlockT> {
 			Vec<Share>,
 		),
 	>,
-	keybox: KeyBox,
+	keybox: Option<KeyBox>,
 	gossip_engine: Arc<Mutex<GossipEngine<B>>>,
 	randomness_nonce_rx: Receiver<Nonce>,
 	randomness_tx: Option<Sender<Randomness>>,
+	dkg_api: Arc<C>,
 }
 
-impl<B: BlockT> Unpin for RandomnessGossip<B> {}
+impl<B: BlockT, C> Unpin for RandomnessGossip<B, C> {}
 
 /// The component used for gossiping and combining shares of randomness.
-impl<B: BlockT> RandomnessGossip<B> {
+impl<B: BlockT, C> RandomnessGossip<B, C> {
 	pub fn new<N: Network<B> + Send + Clone + 'static>(
-		id: String,
 		threshold: u64,
 		randomness_nonce_rx: Receiver<Nonce>,
 		network: N,
 		randomness_tx: Option<Sender<Randomness>>,
+		dkg_api: Arc<C>,
 	) -> Self {
 		let gossip_engine = Arc::new(Mutex::new(GossipEngine::new(
 			network.clone(),
@@ -153,30 +155,14 @@ impl<B: BlockT> RandomnessGossip<B> {
 			Arc::new(GossipValidator::new()),
 		)));
 
-		// Currently, for testing purposes, it only supports Alice and Bob.
-		// This is temporary and will be removed in the 2nd Milestone.
-		let (ap, bp) = sp_randomness_beacon::alice_bob_pairs();
-
-		let verify_keys = vec![ap.verify_key(), bp.verify_key()];
-
-		let (id, share_provider) = if id == "Alice" { (0, ap) } else { (1, bp) };
-		let master_key = VerifyKey::default();
-
-		let keybox = KeyBox::new(
-			id as u64,
-			share_provider,
-			verify_keys,
-			master_key,
-			threshold,
-		);
-
 		RandomnessGossip {
 			threshold,
 			topics: HashMap::new(),
-			keybox,
+			keybox: None,
 			gossip_engine,
 			randomness_nonce_rx,
 			randomness_tx,
+			dkg_api,
 		}
 	}
 
@@ -208,9 +194,9 @@ impl<B: BlockT> RandomnessGossip<B> {
 			})
 			.into_inner();
 
-		let share = self.keybox.generate_share(&nonce);
+		let share = self.keybox.as_ref().unwrap().generate_share(&nonce);
 		let msg = Message {
-			data: Encode::encode(&share),
+			data: share.encode(),
 		};
 
 		let outgoing = OutgoingMessage::<B> {
@@ -223,7 +209,11 @@ impl<B: BlockT> RandomnessGossip<B> {
 	}
 }
 
-impl<B: BlockT> Future for RandomnessGossip<B> {
+impl<B: BlockT, C> Future for RandomnessGossip<B, C>
+where
+	C: sp_api::ProvideRuntimeApi<B>,
+	C::Api: DKGApi<B>,
+{
 	type Output = ();
 
 	/// A future is implemented which intertwines receiving new messages
@@ -248,8 +238,43 @@ impl<B: BlockT> Future for RandomnessGossip<B> {
 			Poll::Ready(None) => return Poll::Ready(()),
 			Poll::Ready(new_nonce) => new_nonce,
 		};
+
+		// TODO: add a mechanism for clearing old topics
+		if new_nonce.is_none() && self.topics.is_empty() {
+			return Poll::Pending;
+		}
+
+		if self.keybox.is_none() {
+			let block_hash =
+				<B as BlockT>::Hash::decode(&mut &new_nonce.as_ref().unwrap()[..]).unwrap();
+
+			// get the keybox from dkg
+			// TODO maybe it would be better to start collecting shares after some specific block
+			// number, but currently RandomnessGossip is not aware of block numbers
+			// TODO error handling
+			self.keybox = match self
+				.dkg_api
+				.runtime_api()
+				.raw_key_box(&BlockId::Hash(block_hash))
+				.ok()
+			{
+				Some(Some(raw_key_box)) => {
+					info!("\ngot raw_key_box for block_hash {:?}\n", block_hash);
+					KeyBox::decode(&mut &raw_key_box[..]).ok()
+				}
+				_ => {
+					info!("\ndidn't got raw_key_box for block_hash {:?}\n", block_hash);
+					None
+				}
+			};
+			if self.keybox.is_none() {
+				return Poll::Pending;
+			}
+		}
+
 		if new_nonce.is_some() {
 			let new_nonce = new_nonce.unwrap();
+
 			let topic = nonce_to_topic::<B>(new_nonce.clone());
 			// received new nonce, start collecting signatures for it
 			if !self.topics.contains_key(&topic) {
@@ -259,12 +284,6 @@ impl<B: BlockT> Future for RandomnessGossip<B> {
 					.insert(topic, (incoming, outgoing, periodic_sender, shares));
 			}
 		}
-
-		// TODO: add a mechanism for clearing old topics
-		if self.topics.is_empty() {
-			return Poll::Pending;
-		}
-
 		let randomness_tx = self.randomness_tx.clone();
 		let keybox = self.keybox.clone();
 		let threshold = self.threshold.clone();
@@ -281,11 +300,11 @@ impl<B: BlockT> Future for RandomnessGossip<B> {
 					let GossipMessage { message, .. } =
 						GossipMessage::decode(&mut &notification.message[..]).unwrap();
 					let share: Share = Decode::decode(&mut &*message.data).unwrap();
-					if keybox.verify_share(&share) {
+					if keybox.as_ref().unwrap().verify_share(&share) {
 						shares.push(share);
 						// TODO: the following needs an overhaul
 						if shares.len() == threshold as usize {
-							let randomness = keybox.combine_shares(shares);
+							let randomness = keybox.as_ref().unwrap().combine_shares(shares);
 
 							// When randomness succesfully combined, notify block proposer
 							if let Some(ref randomness_tx) = randomness_tx {
@@ -374,13 +393,14 @@ mod tests {
 		let network = TestNetwork::default();
 
 		let threshold = 2;
+		let get_keybox = || Some(KeyBox::default());
 
 		let mut alice_rg = RandomnessGossip::<Block>::new(
-			String::from("Alice"),
 			threshold,
 			a_notify_nonce_rx,
 			network.clone(),
 			a_randomness_tx,
+			get_keybox,
 		);
 
 		let nonce = H256::default();
