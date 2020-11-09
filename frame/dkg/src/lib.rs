@@ -17,7 +17,6 @@
 
 #![cfg_attr(not(feature = "std"), no_std)]
 
-use codec::Encode;
 use frame_support::{debug, decl_module, decl_storage, traits::Get, Parameter};
 use frame_system::{
 	ensure_signed,
@@ -30,7 +29,7 @@ use sp_runtime::{
 };
 use sp_std::{convert::TryInto, vec::Vec};
 
-use sp_dkg::{Commitment, EncryptionKey, EncryptionPublicKey, KeyBox, Pair, Scalar, VerifyKey};
+use sp_dkg::{AuthIndex, Commitment, EncryptionKey, EncryptionPublicKey, Scalar, VerifyKey};
 
 // TODO handle the situation when the node is not an authority
 
@@ -144,7 +143,6 @@ pub trait Trait: CreateSignedTransaction<Call<Self>> {
 }
 
 // An index of the authority on the list of validators.
-pub type AuthIndex = u32;
 pub type EncryptedShare = Vec<u8>;
 
 decl_storage! {
@@ -178,7 +176,7 @@ decl_storage! {
 
 		// round 3
 		pub MasterVerificationKey: VerifyKey;
-		VerificationKeys get(fn verification_keys): Vec<VerifyKey>;
+		VerificationKeys: Vec<VerifyKey>;
 
 
 		/// The current authorities
@@ -680,7 +678,11 @@ impl<T: Trait> Module<T> {
 			})
 			.fold(Scalar::zero(), |a, b| a + b);
 
-		let res: Result<_, ()> = val.mutate(|_| Ok((my_ix, secret.to_bytes())));
+		debug::info!(
+			"DKG created secret key {:?}",
+			u8_array_to_u64_array(secret.to_bytes())
+		);
+		let res: Result<_, ()> = val.mutate(|_| Ok(secret.to_bytes()));
 
 		if res.is_err() || res.unwrap().is_err() {
 			debug::info!("DKG handle_round3 error in ssecret");
@@ -781,25 +783,42 @@ impl<T: Trait> Module<T> {
 		}
 	}
 
-	pub fn raw_key_box() -> Option<Vec<u8>> {
-		let share_provider = match StorageValueRef::persistent(b"dkw::threshold_secret_key").get() {
-			None | Some(None) => return None,
-			Some(Some(raw_key)) => Pair::from_secret(Scalar::from_raw(raw_key)),
-		};
-		let ix = match Self::local_authority_key() {
-			None => return None,
-			Some((my_ix, _)) => my_ix as u64,
-		};
-		let verify_keys = VerificationKeys::get();
-		let master_key = MasterVerificationKey::get();
-		let threshold = Threshold::get();
-
-		Some(KeyBox::new(ix, share_provider, verify_keys, master_key, threshold).encode())
+	pub fn my_authority_index() -> Option<AuthIndex> {
+		Self::local_authority_key().map(|(my_ix, _)| my_ix)
 	}
 
 	pub fn master_key_ready() -> T::BlockNumber {
 		// this is the round number when the outside world expects master key to be ready
 		T::MasterKeyReady::get()
+	}
+
+	pub fn public_keybox_parts() -> Option<(AuthIndex, Vec<VerifyKey>, VerifyKey, u64)> {
+		let ix = match Self::my_authority_index() {
+			Some(ix) => ix,
+			None => return None,
+		};
+
+		let verification_keys = match Self::verification_keys() {
+			Some(keys) => keys,
+			None => return None,
+		};
+
+		let master_key = match Self::master_verification_key() {
+			Some(key) => key,
+			None => return None,
+		};
+
+		let threshold = Self::threshold();
+
+		Some((ix, verification_keys, master_key, threshold))
+	}
+
+	pub fn verification_keys() -> Option<Vec<VerifyKey>> {
+		if !VerificationKeys::exists() {
+			return None;
+		}
+
+		Some(VerificationKeys::get())
 	}
 
 	pub fn threshold() -> u64 {

@@ -18,8 +18,10 @@ fork-tree = { version = "2.0.0", path = "../../utils/fork-tree" }
 futures = "0.3.4"
 futures-sink = "0.3.4"
 futures-timer = "3.0.1"
+hyper = "0.12.35"
 parking_lot = "0.10.0"
 rand = "0.7.2"
+jsonrpc-core-client= { version = "15.0.0", default-features = false, features = ["http"] }
 codec = { package = "parity-scale-codec", version = "1.3.1", default-features = false, features = ["derive"] }
 sp-arithmetic = { version = "2.0.0", path = "../../primitives/arithmetic" }
 sp-block-builder = { version = "2.0.0", path = "../../primitives/block-builder" }
@@ -37,6 +39,7 @@ sp-dkg= { version = "0.1.0", path = "../../primitives/dkg" }
 sp-randomness-beacon= { version = "0.1.0", path = "../../primitives/randomness-beacon" }
 sc-proposer-metrics = { version = "0.8.0", path = "../proposer-metrics" }
 sc-network = { version = "0.8.0", path = "../network" }
+sp-tracing = { version = "2.0.0", path = "../../primitives/tracing" }
 sc-network-gossip = { version = "0.8.0", path = "../network-gossip" }
 sp-transaction-pool= { version = "2.0.0", path = "../../primitives/transaction-pool" }
 prometheus-endpoint = { package = "substrate-prometheus-endpoint", path = "../../utils/prometheus", version = "0.8.0"}
@@ -47,6 +50,7 @@ sp-application-crypto = { version = "2.0.0", default-features = false, path = ".
 log = { version = "0.4.8", optional = true }
 serde = { version = "1.0.101", optional = true, features = ["derive"] }
 sp-api = { version = "2.0.0", default-features = false, path = "../../primitives/api" }
+sc-rpc = { version = "2.0.0", path = "../rpc" }
 sp-core = { version = "2.0.0", default-features = false, path = "../../primitives/core" }
 sp-runtime = { version = "2.0.0", default-features = false, path = "../../primitives/runtime" }
 sp-std = { version = "2.0.0", default-features = false, path = "../../primitives/std" }

@@ -20,7 +20,7 @@ use sc_network_gossip::{
 
 use sp_runtime::{generic::BlockId, traits::Block as BlockT};
 
-use sp_dkg::DKGApi;
+use sp_dkg::{DKGApi, Pair, Scalar};
 use sp_randomness_beacon::{KeyBox, Nonce, Randomness, Share};
 
 use futures::{channel::mpsc::Receiver, prelude::*};
@@ -140,7 +140,11 @@ pub struct RandomnessGossip<B: BlockT, C> {
 impl<B: BlockT, C> Unpin for RandomnessGossip<B, C> {}
 
 /// The component used for gossiping and combining shares of randomness.
-impl<B: BlockT, C> RandomnessGossip<B, C> {
+impl<B: BlockT, C> RandomnessGossip<B, C>
+where
+	C: sp_api::ProvideRuntimeApi<B>,
+	C::Api: DKGApi<B>,
+{
 	pub fn new<N: Network<B> + Send + Clone + 'static>(
 		threshold: u64,
 		randomness_nonce_rx: Receiver<Nonce>,
@@ -207,6 +211,65 @@ impl<B: BlockT, C> RandomnessGossip<B, C> {
 
 		(incoming, outgoing, vec![share])
 	}
+
+	fn get_keybox(&mut self, nonce: &Nonce) {
+		let block_hash = <B as BlockT>::Hash::decode(&mut &nonce[..]).unwrap();
+
+		use hyper::rt;
+		use hyper::rt::Future;
+		use jsonrpc_core_client::transports::http;
+		use sc_rpc::offchain::OffchainClient;
+		use sp_core::{offchain::StorageKind, Bytes};
+
+		let (ix, verification_keys, master_key, t) = match self
+			.dkg_api
+			.runtime_api()
+			.public_keybox_parts(&BlockId::Hash(block_hash))
+		{
+			Ok(Some((ix, verification_keys, master_key, t))) => {
+				info!("\ngot parts from dkg_api.public_keybox_parts\n");
+				(ix, verification_keys, master_key, t)
+			}
+			Ok(None) => {
+				info!("\ngot None from dkg_api.public_keybox_parts\n");
+				return;
+			}
+			Err(e) => {
+				info!("\ngot err {:?} from dkg_api.public_keybox_parts\n", e);
+				return;
+			}
+		};
+
+		let (tx, rx) = std::sync::mpsc::channel();
+		let tx = Mutex::new(tx);
+		let url = format!("http://localhost:993{}", 4 + ix);
+		rt::run(rt::lazy(move || {
+			http::connect(url.as_str())
+				.and_then(move |client: OffchainClient| {
+					client
+						.get_local_storage(
+							StorageKind::PERSISTENT,
+							Bytes(b"dkw::threshold_secret_key".to_vec()),
+						)
+						.map(move |enc_key| {
+							let raw_key = <[u64; 4]>::decode(&mut &enc_key.unwrap()[..]).unwrap();
+							info!("\nwe got key {:?}\n", raw_key);
+							info!("\n send {:?}\n", tx.lock().send(raw_key))
+						})
+				})
+				.map_err(|e| info!("\ndidn't get key with err {:?} \n", e))
+		}));
+		let raw_key = rx.recv().unwrap();
+		let share_provider = Pair::from_secret(Scalar::from_raw(raw_key));
+
+		self.keybox = Some(KeyBox::new(
+			ix as u64,
+			share_provider,
+			verification_keys,
+			master_key,
+			t,
+		));
+	}
 }
 
 impl<B: BlockT, C> Future for RandomnessGossip<B, C>
@@ -245,28 +308,11 @@ where
 		}
 
 		if self.keybox.is_none() {
-			let block_hash =
-				<B as BlockT>::Hash::decode(&mut &new_nonce.as_ref().unwrap()[..]).unwrap();
-
 			// get the keybox from dkg
 			// TODO maybe it would be better to start collecting shares after some specific block
 			// number, but currently RandomnessGossip is not aware of block numbers
 			// TODO error handling
-			self.keybox = match self
-				.dkg_api
-				.runtime_api()
-				.raw_key_box(&BlockId::Hash(block_hash))
-				.ok()
-			{
-				Some(Some(raw_key_box)) => {
-					info!("\ngot raw_key_box for block_hash {:?}\n", block_hash);
-					KeyBox::decode(&mut &raw_key_box[..]).ok()
-				}
-				_ => {
-					info!("\ndidn't got raw_key_box for block_hash {:?}\n", block_hash);
-					None
-				}
-			};
+			self.get_keybox(new_nonce.as_ref().unwrap());
 			if self.keybox.is_none() {
 				return Poll::Pending;
 			}

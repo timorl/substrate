@@ -6156,6 +6156,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "rb-node-rpc-client"
+version = "2.0.0"
+dependencies = [
+ "futures 0.1.29",
+ "hyper 0.12.35",
+ "jsonrpc-core-client",
+ "log",
+ "sc-rpc",
+ "sp-core",
+ "sp-tracing",
+]
+
+[[package]]
 name = "rb-node-runtime"
 version = "0.1.0"
 dependencies = [
@@ -7360,6 +7373,8 @@ dependencies = [
  "futures 0.3.5",
  "futures-sink",
  "futures-timer 3.0.2",
+ "hyper 0.12.35",
+ "jsonrpc-core-client",
  "log",
  "parity-scale-codec",
  "parking_lot 0.10.2",
@@ -7374,6 +7389,7 @@ dependencies = [
  "sc-network-gossip",
  "sc-network-test",
  "sc-proposer-metrics",
+ "sc-rpc",
  "sc-telemetry",
  "sc-transaction-pool",
  "serde",
@@ -7393,6 +7409,7 @@ dependencies = [
  "sp-runtime",
  "sp-state-machine",
  "sp-std",
+ "sp-tracing",
  "sp-transaction-pool",
  "sp-utils",
  "substrate-prometheus-endpoint",

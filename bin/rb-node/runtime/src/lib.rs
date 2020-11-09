@@ -508,8 +508,16 @@ impl_runtime_apis! {
 			DKG::master_verification_key()
 		}
 
-		fn raw_key_box() -> Option<Vec<u8>> {
-			DKG::raw_key_box()
+		fn public_keybox_parts() -> Option<(sp_dkg::AuthIndex, Vec<sp_dkg::VerifyKey>, sp_dkg::VerifyKey, u64)> {
+			DKG::public_keybox_parts()
+		}
+
+		fn verification_keys() -> Option<Vec<sp_dkg::VerifyKey>> {
+			DKG::verification_keys()
+		}
+
+		fn authority_index() -> Option<sp_dkg::AuthIndex> {
+			DKG::my_authority_index()
 		}
 
 		fn master_key_ready() -> NumberFor<Block> {

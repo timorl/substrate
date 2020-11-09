@@ -17,7 +17,7 @@ use sp_consensus::{
 };
 use sp_randomness_beacon::Nonce;
 
-use sp_runtime::{generic::BlockId, traits::Block as BlockT};
+use sp_runtime::traits::Block as BlockT;
 use std::{collections::HashMap, marker, sync::Arc};
 
 #[derive(derive_more::Display, Debug)]

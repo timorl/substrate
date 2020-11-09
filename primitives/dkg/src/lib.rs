@@ -12,6 +12,8 @@ use bls12_381::{G1Affine, G2Affine, G2Projective};
 
 pub const KEY_TYPE: KeyTypeId = KeyTypeId(*b"dkg!");
 
+pub type AuthIndex = u32;
+
 pub mod crypto {
 	use super::KEY_TYPE;
 	use sp_runtime::app_crypto::{app_crypto, sr25519};
@@ -162,9 +164,11 @@ impl EncodeLike for Commitment {}
 sp_api::decl_runtime_apis! {
 	pub trait DKGApi {
 		fn master_verification_key() -> Option<VerifyKey>;
-		fn raw_key_box() -> Option<Vec<u8>>;
 		fn master_key_ready() -> NumberFor<Block>;
 		fn threshold() -> u64;
+		fn authority_index() -> Option<AuthIndex>;
+		fn verification_keys() -> Option<Vec<VerifyKey>>;
+		fn public_keybox_parts() -> Option<(AuthIndex, Vec<VerifyKey>, VerifyKey, u64)>;
 	}
 }
 
