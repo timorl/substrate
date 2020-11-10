@@ -13,7 +13,6 @@ members = [
 	"bin/node/runtime",
 	"bin/node/testing",
 	"bin/rb-node/node",
-	"bin/rb-node/rpc-client",
 	"bin/rb-node/runtime",
 	"bin/utils/subkey",
 	"bin/utils/chain-spec-builder",

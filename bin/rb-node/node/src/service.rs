@@ -170,6 +170,7 @@ pub fn new_full(config: Configuration) -> Result<TaskManager, ServiceError> {
 	let prometheus_registry = config.prometheus_registry().cloned();
 	let telemetry_connection_sinks = sc_service::TelemetryConnectionSinks::default();
 	let enable_grandpa = !config.disable_grandpa;
+	let http_rpc_port = config.rpc_http.unwrap().port();
 
 	let rpc_extensions_builder = {
 		let client = client.clone();
@@ -248,6 +249,7 @@ pub fn new_full(config: Configuration) -> Result<TaskManager, ServiceError> {
 		network.clone(),
 		randomness_tx,
 		client.clone(),
+		http_rpc_port,
 	);
 
 	task_manager.spawn_handle().spawn("randomness gossip", rg);

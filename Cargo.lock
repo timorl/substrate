@@ -6156,19 +6156,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "rb-node-rpc-client"
-version = "2.0.0"
-dependencies = [
- "futures 0.1.29",
- "hyper 0.12.35",
- "jsonrpc-core-client",
- "log",
- "sc-rpc",
- "sp-core",
- "sp-tracing",
-]
-
-[[package]]
 name = "rb-node-runtime"
 version = "0.1.0"
 dependencies = [

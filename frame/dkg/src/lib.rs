@@ -678,11 +678,11 @@ impl<T: Trait> Module<T> {
 			})
 			.fold(Scalar::zero(), |a, b| a + b);
 
-		debug::info!(
-			"DKG created secret key {:?}",
-			u8_array_to_u64_array(secret.to_bytes())
-		);
-		let res: Result<_, ()> = val.mutate(|_| Ok(secret.to_bytes()));
+		let res: Result<_, ()> = val.mutate(|_| {
+			let raw_secret = u8_array_to_u64_array(secret.to_bytes());
+			debug::info!("DKG created secret key {:?}", raw_secret);
+			Ok(raw_secret)
+		});
 
 		if res.is_err() || res.unwrap().is_err() {
 			debug::info!("DKG handle_round3 error in ssecret");

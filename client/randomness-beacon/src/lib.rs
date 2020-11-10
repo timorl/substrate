@@ -135,6 +135,7 @@ pub struct RandomnessGossip<B: BlockT, C> {
 	randomness_nonce_rx: Receiver<Nonce>,
 	randomness_tx: Option<Sender<Randomness>>,
 	dkg_api: Arc<C>,
+	http_rpc_port: u16,
 }
 
 impl<B: BlockT, C> Unpin for RandomnessGossip<B, C> {}
@@ -151,6 +152,7 @@ where
 		network: N,
 		randomness_tx: Option<Sender<Randomness>>,
 		dkg_api: Arc<C>,
+		http_rpc_port: u16,
 	) -> Self {
 		let gossip_engine = Arc::new(Mutex::new(GossipEngine::new(
 			network.clone(),
@@ -167,6 +169,7 @@ where
 			randomness_nonce_rx,
 			randomness_tx,
 			dkg_api,
+			http_rpc_port,
 		}
 	}
 
@@ -227,22 +230,22 @@ where
 			.public_keybox_parts(&BlockId::Hash(block_hash))
 		{
 			Ok(Some((ix, verification_keys, master_key, t))) => {
-				info!("\ngot parts from dkg_api.public_keybox_parts\n");
+				info!("got parts from dkg_api.public_keybox_parts");
 				(ix, verification_keys, master_key, t)
 			}
 			Ok(None) => {
-				info!("\ngot None from dkg_api.public_keybox_parts\n");
+				info!("got None from dkg_api.public_keybox_parts");
 				return;
 			}
 			Err(e) => {
-				info!("\ngot err {:?} from dkg_api.public_keybox_parts\n", e);
+				info!("got err {:?} from dkg_api.public_keybox_parts", e);
 				return;
 			}
 		};
 
 		let (tx, rx) = std::sync::mpsc::channel();
 		let tx = Mutex::new(tx);
-		let url = format!("http://localhost:993{}", 4 + ix);
+		let url = format!("http://localhost:{}", self.http_rpc_port);
 		rt::run(rt::lazy(move || {
 			http::connect(url.as_str())
 				.and_then(move |client: OffchainClient| {
@@ -253,11 +256,14 @@ where
 						)
 						.map(move |enc_key| {
 							let raw_key = <[u64; 4]>::decode(&mut &enc_key.unwrap()[..]).unwrap();
-							info!("\nwe got key {:?}\n", raw_key);
-							info!("\n send {:?}\n", tx.lock().send(raw_key))
+							info!(
+								"we got key {:?}; send {:?}",
+								raw_key,
+								tx.lock().send(raw_key)
+							);
 						})
 				})
-				.map_err(|e| info!("\ndidn't get key with err {:?} \n", e))
+				.map_err(|e| info!("didn't get key with err {:?}", e))
 		}));
 		let raw_key = rx.recv().unwrap();
 		let share_provider = Pair::from_secret(Scalar::from_raw(raw_key));
