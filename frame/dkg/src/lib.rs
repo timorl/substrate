@@ -145,6 +145,7 @@ pub trait Trait: CreateSignedTransaction<Call<Self>> {
 // An index of the authority on the list of validators.
 pub type EncryptedShare = Vec<u8>;
 
+// TODO pick hashing functions
 decl_storage! {
 	trait Store for Module<T: Trait> as DKGWorker {
 
