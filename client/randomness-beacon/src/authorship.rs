@@ -8,7 +8,7 @@
 //! absence of randomness would cause creating an incorrect block, so there is no point
 //! in that.
 
-use codec::Encode;
+use codec::{Decode, Encode};
 use log::info;
 use parking_lot::Mutex;
 use sc_client_api::backend;
@@ -90,6 +90,10 @@ where
 		let mut proposer_nonce = None;
 		if parent_number + 1.into() >= self.start_beacon_height {
 			let parent_hash = parent_header.hash();
+			info!(
+				"\n\nstart collectig for parent with bn {:?} and hash {:?}\n",
+				parent_number, parent_hash
+			);
 			let nonce = <Block as BlockT>::Hash::encode(&parent_hash);
 			proposer_nonce = Some(nonce);
 		}
@@ -161,8 +165,8 @@ where
 				match new_randomness {
 					Ok(ref randomness) => {
 						info!(
-							"Adding new randomness {:?} to storage in proposer.",
-							randomness
+							"\n\nAdding new randomness {:?}\n for nonce {:?} to storage in proposer.\n",
+							new_randomness, <Block as BlockT>::Hash::decode(&mut &randomness.nonce()[..])
 						);
 						let nonce = randomness.nonce();
 						self.available_randomness

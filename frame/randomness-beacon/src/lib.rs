@@ -43,6 +43,7 @@ use sp_std::{result, vec::Vec};
 
 pub trait Trait: frame_system::Trait {
 	type StartHeight: Get<Self::BlockNumber>;
+	type MasterKeyReady: Get<Self::BlockNumber>;
 	type MasterKey: Get<Option<VerifyKey>>;
 }
 
@@ -68,15 +69,15 @@ decl_module! {
 		type Error = Error<T>;
 
 		fn on_initialize(now: T::BlockNumber) -> Weight {
-			if now == T::StartHeight::get() {
+			if now == T::MasterKeyReady::get() {
 				assert!(!RandomnessVerifier::exists());
 				assert!(Self::set_master_key());
-				debug::info!("RNDB setting master key at block {:?}", now);
 			}
 
 			0
 		}
 
+		// TODO add verify
 		#[weight = 0]
 		fn set_random_bytes(origin, random_bytes: Vec<u8>)  {
 			ensure_none(origin)?;
@@ -102,6 +103,7 @@ impl<T: Trait> Module<T> {
 
 	fn set_master_key() -> bool {
 		if let Some(mk) = T::MasterKey::get() {
+			debug::info!("\n\nRNDBCN got master key {:?}\n", mk);
 			RandomnessVerifier::put(mk);
 			return true;
 		}
@@ -145,10 +147,15 @@ impl<T: Trait> ProvideInherent for Module<T> {
 	/// a correct randomness seed for the current block.
 	fn check_inherent(call: &Self::Call, _: &InherentData) -> result::Result<(), Self::Error> {
 		let now = <frame_system::Module<T>>::block_number();
+
 		if now < T::StartHeight::get() {
 			return Ok(());
 		}
+
+		debug::info!("\n\n RNDBCK check_inherent at {:?}\n", now);
+
 		if !RandomnessVerifier::exists() {
+			debug::info!("\n\n RNDBCK ERROR no master key\n");
 			return Err(sp_randomness_beacon::inherents::InherentError::VerifyKeyNotSet);
 		}
 		let random_bytes = match call {
@@ -158,8 +165,14 @@ impl<T: Trait> ProvideInherent for Module<T> {
 		let verify_key = Self::verifier();
 		let randomness = Randomness::decode(&mut &*random_bytes).unwrap();
 		if !sp_randomness_beacon::verify_randomness(&verify_key, &randomness) {
+			debug::info!(
+				"\n\n RNDBCK ERROR verification failed for nonce {:?}\n",
+				randomness.nonce()
+			);
 			return Err(sp_randomness_beacon::inherents::InherentError::InvalidRandomBytes);
 		}
+
+		debug::info!("\n\n RNDBCK check_inherent succesful\n");
 		Ok(())
 	}
 }
@@ -234,7 +247,8 @@ mod tests {
 	}
 
 	parameter_types! {
-		pub const StartHeight: <Test as frame_system::Trait>::BlockNumber = 2;
+		pub const MasterKeyReady: <Test as frame_system::Trait>::BlockNumber = 2;
+		pub const StartHeight: <Test as frame_system::Trait>::BlockNumber = 3;
 	}
 
 	pub struct GetMasterKey;
@@ -246,6 +260,7 @@ mod tests {
 	impl Trait for Test {
 		type StartHeight = StartHeight;
 		type MasterKey = GetMasterKey;
+		type MasterKeyReady = MasterKeyReady;
 	}
 
 	type RBeacon = Module<Test>;
@@ -277,7 +292,7 @@ mod tests {
 	#[test]
 	fn verifier_correctly_initialized() {
 		new_test_ext().execute_with(|| {
-			assert_eq!(RBeacon::on_initialize(StartHeight::get()), 0);
+			assert_eq!(RBeacon::on_initialize(MasterKeyReady::get()), 0);
 			assert!(<RBeacon as Store>::RandomnessVerifier::exists());
 		});
 	}

@@ -109,6 +109,9 @@ where
 		new_cache: HashMap<CacheKeyId, Vec<u8>>,
 	) -> Result<ImportResult, Self::Error> {
 		let block_hash = block.post_hash();
+
+		info!("\n\nimporting block from origin: {:?}\n", block.origin);
+
 		let res = self
 			.inner
 			.import_block(block, new_cache)
@@ -120,6 +123,8 @@ where
 		}
 
 		info!(target: "import", "succesfully imported to inner {:?}", res);
+
+		// TODO what sould be first sending nonce or importing?
 		if let Some(nonce) = self.hash_to_nonce(block_hash) {
 			if let Err(err) = self.randomness_nonce_tx.try_send(nonce.clone()) {
 				info!(target: "import", "error when try_send topic through notifier {}", err);

@@ -303,6 +303,7 @@ impl Get<Option<sp_randomness_beacon::VerifyKey>> for GetMasterKey {
 impl pallet_randomness_beacon::Trait for Runtime {
 	type StartHeight = StartHeight;
 	type MasterKey = GetMasterKey;
+	type MasterKeyReady = MasterKeyReady;
 }
 
 impl<LocalCall> frame_system::offchain::CreateSignedTransaction<LocalCall> for Runtime

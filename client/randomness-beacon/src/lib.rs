@@ -230,7 +230,7 @@ where
 			.public_keybox_parts(&BlockId::Hash(block_hash))
 		{
 			Ok(Some((ix, verification_keys, master_key, t))) => {
-				info!("got parts from dkg_api.public_keybox_parts");
+				info!("\n\ngot parts from dkg_api.public_keybox_parts\n");
 				(ix, verification_keys, master_key, t)
 			}
 			Ok(None) => {
@@ -328,6 +328,10 @@ where
 			let new_nonce = new_nonce.unwrap();
 
 			let topic = nonce_to_topic::<B>(new_nonce.clone());
+			info!(
+				"\n\n starting collecting randomness for block {:?}\n",
+				topic
+			);
 			// received new nonce, start collecting signatures for it
 			if !self.topics.contains_key(&topic) {
 				let (incoming, outgoing, shares) = self.initialize_nonce(new_nonce.clone());
@@ -357,6 +361,12 @@ where
 						// TODO: the following needs an overhaul
 						if shares.len() == threshold as usize {
 							let randomness = keybox.as_ref().unwrap().combine_shares(shares);
+
+							info!(
+								"\n\n GOSSIP generated randomness for nonce {:?}: is valid {}",
+								randomness.nonce(),
+								keybox.as_ref().unwrap().verify_randomness(&randomness)
+							);
 
 							// When randomness succesfully combined, notify block proposer
 							if let Some(ref randomness_tx) = randomness_tx {
