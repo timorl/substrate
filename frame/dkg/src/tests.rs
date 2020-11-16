@@ -21,43 +21,7 @@ use sp_runtime::{MultiSignature, Perbill};
 use std::sync::Arc;
 
 #[test]
-fn init() {
-	let (mut t, _, my_id) = new_test_ext();
-	t.execute_with(|| do_init(my_id));
-}
-
-#[test]
-fn test_handle_round0() {
-	let (mut t, states, authorities) = new_test_ext();
-	t.execute_with(|| {
-		let my_ix = do_init(authorities);
-		do_test_handle_round0(states, my_ix);
-	});
-}
-
-#[test]
-fn handle_round1() {
-	let (mut t, states, authorities) = new_test_ext();
-	t.execute_with(|| {
-		let my_ix = do_init(authorities);
-		do_test_handle_round0(states.clone(), my_ix);
-		do_test_handle_round1(states, my_ix);
-	});
-}
-
-#[test]
-fn handle_round2() {
-	let (mut t, states, authorities) = new_test_ext();
-	t.execute_with(|| {
-		let my_ix = do_init(authorities);
-		do_test_handle_round0(states.clone(), my_ix);
-		do_test_handle_round1(states.clone(), my_ix);
-		do_test_handle_round2(states);
-	});
-}
-
-#[test]
-fn handle_round3() {
+fn dkg() {
 	let (mut t, states, authorities) = new_test_ext();
 	t.execute_with(|| {
 		let my_ix = do_init(authorities);
