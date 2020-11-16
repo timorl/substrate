@@ -176,7 +176,7 @@ pub type ShareProvider = Pair;
 
 fn poly_eval(coeffs: &Vec<Scalar>, x: &Scalar) -> Scalar {
 	let mut eval = Scalar::zero();
-	for coeff in coeffs.iter() {
+	for coeff in coeffs.iter().rev() {
 		eval *= x;
 		eval += coeff;
 	}
@@ -195,7 +195,7 @@ pub fn generate_threshold_pairs(n_members: usize, threshold: usize) -> (Vec<Pair
 		coeffs.push(random_scalar());
 	}
 
-	let secret = coeffs.last().unwrap().clone();
+	let secret = coeffs[0].clone();
 	let master_key = VerifyKey::from_secret(&secret);
 
 	for i in 0..n_members {

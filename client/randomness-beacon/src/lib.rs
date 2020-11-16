@@ -202,6 +202,7 @@ where
 			.into_inner();
 
 		let share = self.keybox.as_ref().unwrap().generate_share(&nonce);
+
 		let msg = Message {
 			data: share.encode(),
 		};
@@ -341,7 +342,7 @@ where
 			}
 		}
 		let randomness_tx = self.randomness_tx.clone();
-		let keybox = self.keybox.clone();
+		let keybox = self.keybox.clone().unwrap();
 		let threshold = self.threshold.clone();
 
 		for (_, (incoming, outgoing, periodic_sender, shares)) in self.topics.iter_mut() {
@@ -356,16 +357,16 @@ where
 					let GossipMessage { message, .. } =
 						GossipMessage::decode(&mut &notification.message[..]).unwrap();
 					let share: Share = Decode::decode(&mut &*message.data).unwrap();
-					if keybox.as_ref().unwrap().verify_share(&share) {
+					if keybox.verify_share(&share) {
 						shares.push(share);
 						// TODO: the following needs an overhaul
 						if shares.len() == threshold as usize {
-							let randomness = keybox.as_ref().unwrap().combine_shares(shares);
+							let randomness = keybox.combine_shares(shares);
 
 							info!(
 								"\n\n GOSSIP generated randomness for nonce {:?}: is valid {}",
 								randomness.nonce(),
-								keybox.as_ref().unwrap().verify_randomness(&randomness)
+								keybox.verify_randomness(&randomness)
 							);
 
 							// When randomness succesfully combined, notify block proposer

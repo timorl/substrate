@@ -126,7 +126,7 @@ impl Commitment {
 
 	pub fn poly_eval(coeffs: &Vec<Self>, x: &Scalar) -> Self {
 		let mut eval = G2Projective::identity();
-		for coeff in coeffs.iter().map(|c| G2Projective::from(c.g2point)) {
+		for coeff in coeffs.iter().rev().map(|c| G2Projective::from(c.g2point)) {
 			eval *= x;
 			eval += coeff;
 		}

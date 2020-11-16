@@ -614,6 +614,7 @@ impl<T: Trait> Module<T> {
 		}
 	}
 
+	// TODO move all computations of public stuff to on_finalize
 	// derivie local key pair and master verification key, and send master key to the chain
 	fn handle_round3(block_number: T::BlockNumber) {
 		const ALREADY_SET: () = ();
