@@ -20,15 +20,57 @@ use sp_runtime::traits::{BlakeTwo256, Extrinsic as ExtrinsicT, IdentityLookup, V
 use sp_runtime::{MultiSignature, Perbill};
 use std::sync::Arc;
 
+#[test]
+fn init() {
+	let (mut t, _, my_id) = new_test_ext();
+	t.execute_with(|| do_init(my_id));
+}
+
+#[test]
+fn test_handle_round0() {
+	let (mut t, states, authorities) = new_test_ext();
+	t.execute_with(|| {
+		let my_ix = do_init(authorities);
+		do_test_handle_round0(states, my_ix);
+	});
+}
+
+#[test]
+fn handle_round1() {
+	let (mut t, states, authorities) = new_test_ext();
+	t.execute_with(|| {
+		let my_ix = do_init(authorities);
+		do_test_handle_round0(states.clone(), my_ix);
+		do_test_handle_round1(states, my_ix);
+	});
+}
+
+#[test]
+fn handle_round2() {
+	let (mut t, states, authorities) = new_test_ext();
+	t.execute_with(|| {
+		let my_ix = do_init(authorities);
+		do_test_handle_round0(states.clone(), my_ix);
+		do_test_handle_round1(states.clone(), my_ix);
+		do_test_handle_round2(states);
+	});
+}
+
+#[test]
+fn handle_round3() {
+	let (mut t, states, authorities) = new_test_ext();
+	t.execute_with(|| {
+		let my_ix = do_init(authorities);
+		do_test_handle_round0(states.clone(), my_ix);
+		do_test_handle_round1(states.clone(), my_ix);
+		do_test_handle_round2(states.clone());
+		do_test_handle_round3(states);
+	});
+}
+
 impl_outer_origin! {
 	pub enum Origin for Runtime where system = frame_system {}
 }
-
-//impl_outer_dispatch! {
-//	pub enum Call for Runtime where origin: Origin {
-//		pallet_dkg::DKG,
-//	}
-//}
 
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct Runtime;
@@ -159,12 +201,6 @@ fn new_test_ext() -> (
 	(ext, states, my_id)
 }
 
-#[test]
-fn init() {
-	let (mut t, _, my_id) = new_test_ext();
-	t.execute_with(|| do_init(my_id));
-}
-
 fn do_init(my_id: sp_dkg::crypto::AuthorityId) -> usize {
 	let mut authorities = vec![
 		my_id.clone().into(),
@@ -183,15 +219,6 @@ fn do_init(my_id: sp_dkg::crypto::AuthorityId) -> usize {
 		.iter()
 		.position(|id| *id == my_id.clone().into())
 		.unwrap()
-}
-
-#[test]
-fn test_handle_round0() {
-	let (mut t, states, authorities) = new_test_ext();
-	t.execute_with(|| {
-		let my_ix = do_init(authorities);
-		do_test_handle_round0(states, my_ix);
-	});
 }
 
 fn get_secret(offchain_state: Arc<RwLock<OffchainState>>) -> [u64; 4] {
@@ -235,25 +262,17 @@ fn do_test_handle_round0(states: States, my_ix: usize) {
 		.for_each(|pk| assert!(pk.is_some()));
 }
 
-#[test]
-fn handle_round1() {
-	let (mut t, states, authorities) = new_test_ext();
-	t.execute_with(|| {
-		let my_ix = do_init(authorities);
-		do_test_handle_round0(states.clone(), my_ix);
-		do_test_handle_round1(states, my_ix);
-	});
+fn encryption_keys(secret: Scalar) -> impl Iterator<Item = EncryptionKey> {
+	DKG::encryption_pks()
+		.into_iter()
+		.map(move |enc_pk| enc_pk.unwrap().to_encryption_key(secret))
 }
 
 fn enc_shares_comms(
 	secret: Scalar,
 	poly: Vec<Scalar>,
 ) -> (Vec<Option<EncryptedShare>>, Vec<Commitment>) {
-	let encryption_keys = DKG::encryption_pks()
-		.into_iter()
-		.map(|enc_pk| enc_pk.unwrap().to_encryption_key(secret));
-
-	let enc_shares = encryption_keys.enumerate().map(|(ix, enc_key)| {
+	let enc_shares = encryption_keys(secret).enumerate().map(|(ix, enc_key)| {
 		let x = &Scalar::from(ix as u64 + 1);
 		let share = poly_eval(&poly, x).to_bytes().to_vec();
 		Some(enc_key.encrypt(&share))
@@ -312,29 +331,32 @@ fn do_test_handle_round1(states: States, my_ix: usize) {
 	}
 }
 
-#[test]
-fn handle_round2() {
-	let (mut t, states, authorities) = new_test_ext();
-	t.execute_with(|| {
-		let my_ix = do_init(authorities);
-		do_test_handle_round0(states.clone(), my_ix);
-		do_test_handle_round1(states.clone(), my_ix);
-		do_test_handle_round2(states, my_ix);
-	});
-}
-
-fn do_test_handle_round2(states: States, _my_ix: usize) {
+fn do_test_handle_round2(states: States) {
 	// do the round
 	let block_number = 5;
 	System::set_block_number(block_number);
 	DKG::handle_round2(block_number);
 
 	// check if correct values was submitted on chain
-
 	let tx = states.pool.write().transactions.pop().unwrap();
 	assert!(states.pool.read().transactions.is_empty());
 	let tx = Extrinsic::decode(&mut &*tx).unwrap();
 	assert_eq!(tx.signature.unwrap().0, 2);
 
 	assert_eq!(tx.call, Call::post_disputes(Vec::new(), Default::default()));
+}
+
+fn do_test_handle_round3(states: States) {
+	// do the round
+	let block_number = 7;
+	System::set_block_number(block_number);
+	DKG::handle_round3(block_number);
+
+	// check if correct values was submitted on chain
+	let tx = states.pool.write().transactions.pop().unwrap();
+	assert!(states.pool.read().transactions.is_empty());
+	let tx = Extrinsic::decode(&mut &*tx).unwrap();
+	assert_eq!(tx.signature.unwrap().0, 3);
+
+	//assert_eq!(tx.call, Call::post_verification_keys(mvk, vks, Default::default()));
 }
