@@ -28,7 +28,7 @@ fn dkg() {
 		do_test_handle_round0(states.clone(), my_ix);
 		do_test_handle_round1(states.clone(), my_ix);
 		do_test_handle_round2(states.clone());
-		do_test_handle_round3(states);
+		do_test_handle_round3(states, my_ix);
 	});
 }
 
@@ -130,10 +130,6 @@ struct States {
 	pool: Arc<RwLock<PoolState>>,
 }
 
-fn gen_key(seed: Vec<u8>) -> crypto::DKGId {
-	sp_dkg::crypto::AuthorityId::generate_pair(Some(seed)).into()
-}
-
 fn new_test_ext() -> (
 	sp_io::TestExternalities,
 	States,
@@ -166,12 +162,8 @@ fn new_test_ext() -> (
 }
 
 fn do_init(my_id: sp_dkg::crypto::AuthorityId) -> usize {
-	let mut authorities = vec![
-		my_id.clone().into(),
-		gen_key(b"/bob".to_vec()),
-		gen_key(b"/charlie".to_vec()),
-		gen_key(b"/dave".to_vec()),
-	];
+	let mut authorities = vec![crypto::DKGId::default(); 4];
+	authorities[0] = my_id.clone().into();
 	authorities.sort();
 
 	DKG::init_store(&authorities[..]);
@@ -185,7 +177,7 @@ fn do_init(my_id: sp_dkg::crypto::AuthorityId) -> usize {
 		.unwrap()
 }
 
-fn get_secret(offchain_state: Arc<RwLock<OffchainState>>) -> [u64; 4] {
+fn get_secret_enc_key(offchain_state: Arc<RwLock<OffchainState>>) -> [u64; 4] {
 	let raw_secret_encoded = offchain_state
 		.read()
 		.persistent_storage
@@ -201,7 +193,7 @@ fn do_test_handle_round0(states: States, my_ix: usize) {
 	DKG::handle_round0(block_number);
 
 	// check if correct values was submitted on chain
-	let raw_secret = get_secret(states.offchain);
+	let raw_secret = get_secret_enc_key(states.offchain);
 	let enc_pk = EncryptionPublicKey::from_raw_scalar(raw_secret);
 
 	let tx = states.pool.write().transactions.pop().unwrap();
@@ -216,7 +208,7 @@ fn do_test_handle_round0(states: States, my_ix: usize) {
 			if ix == my_ix {
 				values[ix] = Some(enc_pk.clone())
 			} else {
-				values[ix] = Some(EncryptionPublicKey::from_raw_scalar([0, 0, 0, ix as u64]))
+				values[ix] = Some(EncryptionPublicKey::from_raw_scalar([ix as u64, 0, 0, 0]))
 			}
 		}
 	});
@@ -233,14 +225,16 @@ fn encryption_keys(secret: Scalar) -> impl Iterator<Item = EncryptionKey> {
 }
 
 fn enc_shares_comms(
-	secret: Scalar,
+	secret_enc_key: Scalar,
 	poly: Vec<Scalar>,
 ) -> (Vec<Option<EncryptedShare>>, Vec<Commitment>) {
-	let enc_shares = encryption_keys(secret).enumerate().map(|(ix, enc_key)| {
-		let x = &Scalar::from(ix as u64 + 1);
-		let share = poly_eval(&poly, x).to_bytes().to_vec();
-		Some(enc_key.encrypt(&share))
-	});
+	let enc_shares = encryption_keys(secret_enc_key)
+		.enumerate()
+		.map(|(ix, enc_key)| {
+			let x = &Scalar::from(ix as u64 + 1);
+			let share = poly_eval(&poly, x).to_bytes().to_vec();
+			Some(enc_key.encrypt(&share))
+		});
 
 	let comms = (0..3).map(|i| Commitment::new(poly[i])).collect();
 
@@ -257,6 +251,10 @@ fn do_test_handle_round1(states: States, my_ix: usize) {
 	// do the round
 	let block_number = 3;
 	System::set_block_number(block_number);
+	// TODO set sth more fancy
+	let mut seed = [0u8; 32];
+	seed[0] = 1;
+	states.offchain.write().seed = seed;
 	DKG::handle_round1(block_number);
 
 	// check if correct values was submitted on chain
@@ -272,8 +270,8 @@ fn do_test_handle_round1(states: States, my_ix: usize) {
 		.map(|raw| Scalar::from_raw(raw))
 		.collect();
 
-	let secret = Scalar::from_raw(get_secret(states.offchain));
-	let (enc_shares, commitments) = enc_shares_comms(secret, poly);
+	let secret_enc_key = Scalar::from_raw(get_secret_enc_key(states.offchain));
+	let (enc_shares, commitments) = enc_shares_comms(secret_enc_key, poly);
 	set_shares_commes(my_ix, enc_shares.clone(), commitments.clone());
 
 	let tx = states.pool.write().transactions.pop().unwrap();
@@ -288,6 +286,9 @@ fn do_test_handle_round1(states: States, my_ix: usize) {
 
 	// manually add enc_shares and commitments
 	for ix in 0..4 {
+		if ix == my_ix {
+			continue;
+		}
 		let poly = [ix, 1, 1].iter().map(|i| Scalar::from(*i as u64)).collect();
 		let secret = Scalar::from(ix as u64);
 		let (shares, comms) = enc_shares_comms(secret, poly);
@@ -310,17 +311,74 @@ fn do_test_handle_round2(states: States) {
 	assert_eq!(tx.call, Call::post_disputes(Vec::new(), Default::default()));
 }
 
-fn do_test_handle_round3(states: States) {
+fn do_test_handle_round3(states: States, my_ix: usize) {
 	// do the round
 	let block_number = 7;
 	System::set_block_number(block_number);
 	DKG::handle_round3(block_number);
 
 	// check if correct values was submitted on chain
+	let tsk_encoded = states
+		.offchain
+		.read()
+		.persistent_storage
+		.get(b"", b"dkw::threshold_secret_key")
+		.unwrap();
+	let tsk = Scalar::from_bytes(&<[u8; 32]>::decode(&mut &tsk_encoded[..]).unwrap()).unwrap();
+
+	let tsk_shares_encoded = states
+		.offchain
+		.read()
+		.persistent_storage
+		.get(b"", b"dkw::secret_shares")
+		.unwrap();
+	let tsk_shares = <Vec<Option<[u8; 32]>>>::decode(&mut &tsk_shares_encoded[..])
+		.unwrap()
+		.into_iter()
+		.map(|raw| Scalar::from_bytes(&raw.unwrap()).unwrap());
+	assert_eq!(tsk, tsk_shares.fold(Scalar::zero(), |a, b| a + b));
+
+	let comms = DKG::committed_polynomilas()
+		.into_iter()
+		.map(|comms| comms[0].clone())
+		.collect();
+
+	let mvk = Commitment::derive_key(comms);
+
+	let raw_poly_coeffs_encoded = states
+		.offchain
+		.read()
+		.persistent_storage
+		.get(b"", b"dkw::secret_poly")
+		.unwrap();
+	let raw_poly_coeffs = <Vec<[u64; 4]>>::decode(&mut &raw_poly_coeffs_encoded[..]).unwrap();
+	let local_secret = Scalar::from_raw(raw_poly_coeffs[0]);
+	let mut msk = local_secret;
+	for ix in 0..4 {
+		if ix == my_ix {
+			continue;
+		}
+		msk += Scalar::from(ix as u64);
+	}
+	assert_eq!(mvk, Commitment::derive_key(vec![Commitment::new(msk)]));
+
 	let tx = states.pool.write().transactions.pop().unwrap();
 	assert!(states.pool.read().transactions.is_empty());
 	let tx = Extrinsic::decode(&mut &*tx).unwrap();
 	assert_eq!(tx.signature.unwrap().0, 3);
 
-	//assert_eq!(tx.call, Call::post_verification_keys(mvk, vks, Default::default()));
+	// TODO manually check vks as mvk
+	let mut vks = Vec::new();
+	for ix in 0..4 {
+		let x = &Scalar::from(ix as u64 + 1);
+		let part_keys = (0..4)
+			.map(|dealer| Commitment::poly_eval(&DKG::committed_polynomilas()[dealer], x))
+			.collect();
+		vks.push(Commitment::derive_key(part_keys))
+	}
+
+	assert_eq!(
+		tx.call,
+		Call::post_verification_keys(mvk, vks, Default::default())
+	);
 }
