@@ -88,7 +88,7 @@ impl VerifyKey {
 		p1 == p2
 	}
 
-	fn from_secret(secret: &Scalar) -> Self {
+	pub fn from_secret(secret: &Scalar) -> Self {
 		VerifyKey {
 			point: G2Affine::from(G2Affine::generator() * secret),
 		}
@@ -210,7 +210,7 @@ pub fn generate_threshold_pairs(n_members: usize, threshold: usize) -> (Vec<Pair
 	(pairs, master_key)
 }
 
-#[derive(PartialEq, Decode, Encode)]
+#[derive(PartialEq, Clone, Decode, Encode)]
 pub struct Share {
 	creator: u64,
 	nonce: Nonce,

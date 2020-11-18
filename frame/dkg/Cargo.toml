@@ -20,6 +20,7 @@ sp-dkg = { version = "0.1.0", default-features = false, path = "../../primitives
 sp-std = { version = "2.0.0", default-features = false, path = "../../primitives/std" }
 sp-core = { version = "2.0.0", default-features = false, path = "../../primitives/core" }
 sp-runtime = { version = "2.0.0", default-features = false, path = "../../primitives/runtime" }
+sp-keystore = { version = "0.8.0", path = "../../primitives/keystore", optional = true }
 pallet-session = { version = "2.0.0", default-features = false, path = "../session" }
 sp-randomness-beacon= { version = "0.1.0", default-features = false, path = "../../primitives/randomness-beacon" }
 frame-support = { version = "2.0.0", default-features = false, path = "../support" }
@@ -27,6 +28,8 @@ frame-system = { version = "2.0.0", default-features = false, path = "../system"
 
 
 [dev-dependencies]
+parking_lot = "0.10.2"
+sp-io ={ version = "2.0.0", path = "../../primitives/io" }
 
 
 [features]
@@ -39,6 +42,8 @@ std = [
 	"sp-std/std",
 	"sp-core/std",
 	"sp-runtime/std",
+	"sp-keystore",
+	"pallet-session/std",
 	"frame-support/std",
 	"frame-system/std",
 	"sp-randomness-beacon/std",
