@@ -272,7 +272,7 @@ fn test_handle_round3(states: &States, my_ix: usize) {
 		.map(|raw| Scalar::from_bytes(&raw.unwrap()).unwrap());
 	assert_eq!(tsk, tsk_shares.fold(Scalar::zero(), |a, b| a + b));
 
-	let comms = DKG::committed_polynomilas()
+	let comms = DKG::committed_polynomials()
 		.into_iter()
 		.map(|comms| comms[0].clone())
 		.collect();
@@ -301,7 +301,7 @@ fn test_handle_round3(states: &States, my_ix: usize) {
 	for ix in 0..N_MEMBERS {
 		let x = &Scalar::from(ix as u64 + 1);
 		let part_keys = (0..N_MEMBERS)
-			.map(|dealer| Commitment::poly_eval(&DKG::committed_polynomilas()[dealer], x))
+			.map(|dealer| Commitment::poly_eval(&DKG::committed_polynomials()[dealer], x))
 			.collect();
 		vks.push(Commitment::derive_key(part_keys))
 	}
@@ -383,7 +383,7 @@ fn test_keybox(states: &States, my_ix: usize) {
 			let shares = shares
 				.clone()
 				.into_iter()
-				.filter(|s| *s == shares[ix])
+				.filter(|s| *s != shares[ix])
 				.collect();
 			let signature = kbs[ix].combine_shares(&shares);
 			assert!(kbs[ix].verify_randomness(&signature));
