@@ -29,11 +29,15 @@ use sp_runtime::{
 };
 use sp_std::{convert::TryInto, vec::Vec};
 
-use sp_dkg::{AuthIndex, Commitment, EncryptionKey, EncryptionPublicKey, Scalar, VerifyKey};
+use sp_dkg::{
+	AuthIndex, Commitment, EncryptionKey, EncryptionPublicKey, RawScalar, Scalar, VerifyKey,
+};
+
+mod tests;
 
 // TODO handle the situation when the node is not an authority
 
-// TODO do we add protection against biasing
+// TODO do we add protection against biasing?
 
 // n is the number of nodes in the committee
 // node indices are 1-based: 1, 2, ..., n
@@ -49,7 +53,6 @@ pub mod crypto {
 	use codec::{Decode, Encode};
 	use sp_runtime::{MultiSignature, MultiSigner};
 
-	//pub type DKGId = sp_dkg::crypto::Public;
 	#[cfg(feature = "std")]
 	use serde::{Deserialize, Serialize};
 	#[cfg_attr(feature = "std", derive(Deserialize, Serialize))]
@@ -385,7 +388,7 @@ impl<T: Trait> Module<T> {
 
 		// TODO: encrypt the key in the store?
 		let val = StorageValueRef::persistent(b"dkw::enc_key");
-		let res = val.mutate(|last_set: Option<Option<[u64; 4]>>| match last_set {
+		let res = val.mutate(|last_set: Option<Option<RawScalar>>| match last_set {
 			Some(Some(_)) => Err(ALREADY_SET),
 			_ => {
 				let scalar_raw = gen_raw_scalar();
@@ -447,7 +450,7 @@ impl<T: Trait> Module<T> {
 		let n_members = Self::authorities().len();
 		let threshold = Threshold::get();
 		let val = StorageValueRef::persistent(b"dkw::secret_poly");
-		let res = val.mutate(|last_set: Option<Option<Vec<[u64; 4]>>>| match last_set {
+		let res = val.mutate(|last_set: Option<Option<Vec<RawScalar>>>| match last_set {
 			Some(Some(_)) => Err(ALREADY_SET),
 			_ => {
 				let poly = gen_poly_coeffs(threshold - 1);
@@ -469,14 +472,14 @@ impl<T: Trait> Module<T> {
 		let poly = &res.into_iter().map(|raw| Scalar::from_raw(raw)).collect();
 
 		// 1. generate encryption keys
-		let encryption_keys = Self::encryption_keys(n_members);
+		let encryption_keys = Self::encryption_keys();
 
 		// 2. generate secret shares
 		let mut enc_shares = sp_std::vec![None; n_members];
 
 		for ix in 0..n_members {
 			if let Some(ref enc_key) = encryption_keys[ix] {
-				let x = &Scalar::from((ix+1) as u64);
+				let x = &Scalar::from((ix + 1) as u64);
 				let share = poly_eval(poly, x);
 				let share_data = share.to_bytes().to_vec();
 				enc_shares[ix] = Some(enc_key.encrypt(&share_data));
@@ -538,7 +541,7 @@ impl<T: Trait> Module<T> {
 
 		let val = StorageValueRef::persistent(b"dkw::secret_shares");
 		let res = val.mutate(
-			|last_set: Option<Option<Vec<Option<[u64; 4]>>>>| match last_set {
+			|last_set: Option<Option<Vec<Option<[u8; 32]>>>>| match last_set {
 				Some(Some(_)) => Err(ALREADY_SET),
 				_ => Ok(Vec::new()),
 			},
@@ -552,7 +555,7 @@ impl<T: Trait> Module<T> {
 		let n_members = Self::authorities().len();
 
 		// 0. generate encryption keys
-		let encryption_keys = Self::encryption_keys(n_members);
+		let encryption_keys = Self::encryption_keys();
 
 		// 1. decrypt shares, check commitments
 		let mut shares = sp_std::vec![None; n_members];
@@ -572,10 +575,9 @@ impl<T: Trait> Module<T> {
 				// TODO add proper proof and commitment verification
 				disputes.push(creator as AuthIndex);
 			} else {
-				let bytes: [u8; 32] = share.unwrap()[..]
+				let share_data: [u8; 32] = share.unwrap()[..]
 					.try_into()
 					.expect("slice with incorrect length");
-				let share_data = u8_array_to_u64_array(bytes);
 				shares[creator] = Some(share_data);
 			}
 		}
@@ -652,11 +654,11 @@ impl<T: Trait> Module<T> {
 
 		// 1. derive local threshold secret
 		let val = StorageValueRef::persistent(b"dkw::threshold_secret_key");
-		let res = val.mutate(|last_set: Option<Option<[u64; 4]>>| match last_set {
+		let res = val.mutate(|last_set: Option<Option<[u8; 32]>>| match last_set {
 			Some(Some(_)) => Err(ALREADY_SET),
 			_ => {
 				debug::info!("DKG generating master_key");
-				Ok([0; 4])
+				Ok([0; 32])
 			}
 		});
 
@@ -666,19 +668,19 @@ impl<T: Trait> Module<T> {
 		}
 
 		let secret = StorageValueRef::persistent(b"dkw::secret_shares")
-			.get::<Vec<Option<[u64; 4]>>>()
+			.get::<Vec<Option<[u8; 32]>>>()
 			.unwrap()
 			.unwrap()
 			.iter()
 			.enumerate()
 			.filter_map(|(ix, &share)| match (qualified[ix], share) {
 				(false, _) | (true, None) => None,
-				(true, Some(share)) => Some(Scalar::from_raw(share)),
+				(true, Some(share)) => Some(Scalar::from_bytes(&share).unwrap()),
 			})
 			.fold(Scalar::zero(), |a, b| a + b);
 
 		let res: Result<_, ()> = val.mutate(|_| {
-			let raw_secret = u8_array_to_u64_array(secret.to_bytes());
+			let raw_secret = secret.to_bytes();
 			debug::info!("DKG created secret key {:?}", raw_secret);
 			Ok(raw_secret)
 		});
@@ -703,7 +705,7 @@ impl<T: Trait> Module<T> {
 		let n_members = Self::authorities().len();
 		let mut vks = Vec::new();
 		for ix in 0..n_members {
-			let x = &Scalar::from((ix+1) as u64);
+			let x = &Scalar::from((ix + 1) as u64);
 			let part_keys = (0..n_members)
 				.filter(|dealer| {
 					qualified[*dealer] && !Self::committed_polynomials()[*dealer].is_empty()
@@ -761,20 +763,21 @@ impl<T: Trait> Module<T> {
 			})
 	}
 
-	fn encryption_keys(n_members: usize) -> Vec<Option<EncryptionKey>> {
+	fn encryption_keys() -> Vec<Option<EncryptionKey>> {
 		let raw_secret = StorageValueRef::persistent(b"dkw::enc_key")
 			.get()
 			.unwrap()
 			.unwrap();
 		let secret = Scalar::from_raw(raw_secret);
-		let mut encryption_keys = sp_std::vec![None; n_members];
-		for ix in 0..n_members {
-			if let Some(ref enc_pk) = Self::encryption_pks()[ix] {
-				encryption_keys[ix] = Some(enc_pk.to_encryption_key(secret));
-			}
-		}
+		let mut keys = Vec::new();
+		Self::encryption_pks()
+			.iter()
+			.for_each(|enc_pk| match enc_pk {
+				Some(enc_pk) => keys.push(Some(enc_pk.to_encryption_key(secret))),
+				None => keys.push(None),
+			});
 
-		encryption_keys
+		keys
 	}
 
 	pub fn master_verification_key() -> Option<VerifyKey> {
@@ -831,7 +834,7 @@ impl<T: Trait> sp_runtime::BoundToRuntimeAppPublic for Module<T> {
 	type Public = T::AuthorityId;
 }
 
-fn u8_array_to_u64_array(bytes: [u8; 32]) -> [u64; 4] {
+fn u8_array_to_raw_scalar(bytes: [u8; 32]) -> RawScalar {
 	let mut out = [0u64; 4];
 	for i in 0..4 {
 		out[i] = u64::from_le_bytes(
@@ -843,11 +846,11 @@ fn u8_array_to_u64_array(bytes: [u8; 32]) -> [u64; 4] {
 	out
 }
 
-fn gen_raw_scalar() -> [u64; 4] {
-	u8_array_to_u64_array(sp_io::offchain::random_seed())
+fn gen_raw_scalar() -> RawScalar {
+	u8_array_to_raw_scalar(sp_io::offchain::random_seed())
 }
 
-fn gen_poly_coeffs(deg: u64) -> Vec<[u64; 4]> {
+fn gen_poly_coeffs(deg: u64) -> Vec<RawScalar> {
 	let mut coeffs = Vec::new();
 	for _ in 0..deg + 1 {
 		coeffs.push(gen_raw_scalar());

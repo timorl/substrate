@@ -13,6 +13,7 @@ use bls12_381::{G1Affine, G2Affine, G2Projective};
 pub const KEY_TYPE: KeyTypeId = KeyTypeId(*b"dkg!");
 
 pub type AuthIndex = u32;
+pub type RawScalar = [u64; 4];
 
 pub mod crypto {
 	use super::KEY_TYPE;
@@ -29,7 +30,7 @@ pub struct EncryptionPublicKey {
 }
 
 impl EncryptionPublicKey {
-	pub fn from_raw_scalar(raw_scalar: [u64; 4]) -> Self {
+	pub fn from_raw_scalar(raw_scalar: RawScalar) -> Self {
 		let scalar = Scalar::from_raw(raw_scalar);
 
 		Self::from_scalar(scalar)

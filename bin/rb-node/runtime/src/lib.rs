@@ -269,7 +269,6 @@ impl pallet_sudo::Trait for Runtime {
 // after 8th block an offchain worker is run that will submit master key
 // after 10th block the master key is in dkg pallet's storage so raw_key_box may be extracted and
 // RandomnessGossip may start collecting randomness shares for nonce=hash of block of number >= 11
-//
 const ROUNDS_ENDS: [u32; 4] = [2, 4, 6, 8];
 const MASTER_KEY_READY: u32 = 10;
 const START_HEIGHT: u32 = 11;
