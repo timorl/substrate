@@ -159,7 +159,7 @@ decl_storage! {
 
 		// ith entry is the CommitedPoly of (i+1)th node submitted in a tx in round 1
 		// CommittedPolynomials: Vec<Option<CommittedPoly>>;
-		CommittedPolynomials get(fn committed_polynomilas): Vec<Vec<Commitment>>;
+		CommittedPolynomials get(fn committed_polynomials): Vec<Vec<Commitment>>;
 		// ith entry is the EncShareList of (i+1)th node submitted in a tx in round 1
 		// EncryptedSharesLists: Vec<Option<EncShareList>>;
 		EncryptedSharesLists get(fn encrypted_shares_lists): Vec<Vec<Option<EncryptedShare>>>;
@@ -476,7 +476,7 @@ impl<T: Trait> Module<T> {
 
 		for ix in 0..n_members {
 			if let Some(ref enc_key) = encryption_keys[ix] {
-				let x = &Scalar::from_raw([ix as u64 + 1, 0, 0, 0]);
+				let x = &Scalar::from((ix+1) as u64);
 				let share = poly_eval(poly, x);
 				let share_data = share.to_bytes().to_vec();
 				enc_shares[ix] = Some(enc_key.encrypt(&share_data));
@@ -623,6 +623,7 @@ impl<T: Trait> Module<T> {
 		let threshold = Threshold::get();
 		let qualified = Self::is_correct_dealer();
 		let n_qualified = qualified.iter().map(|&v| v as u64).sum::<u64>();
+		// TODO: (DAMIAN) I think we can skip this check -- it does not buy us anything
 		assert!(
 			n_qualified >= threshold,
 			"not enough qualified nodes: needs at least {}, got {}",
@@ -688,7 +689,7 @@ impl<T: Trait> Module<T> {
 		}
 
 		// 2. derive and post master key and verification keys
-		let comms = Self::committed_polynomilas()
+		let comms = Self::committed_polynomials()
 			.into_iter()
 			.enumerate()
 			.filter(|(ix, comms)| qualified[*ix] && !comms.is_empty())
@@ -702,12 +703,12 @@ impl<T: Trait> Module<T> {
 		let n_members = Self::authorities().len();
 		let mut vks = Vec::new();
 		for ix in 0..n_members {
-			let x = &Scalar::from_raw([ix as u64 + 1, 0, 0, 0]);
+			let x = &Scalar::from((ix+1) as u64);
 			let part_keys = (0..n_members)
 				.filter(|dealer| {
-					qualified[*dealer] && !Self::committed_polynomilas()[*dealer].is_empty()
+					qualified[*dealer] && !Self::committed_polynomials()[*dealer].is_empty()
 				})
-				.map(|dealer| Commitment::poly_eval(&Self::committed_polynomilas()[dealer], x))
+				.map(|dealer| Commitment::poly_eval(&Self::committed_polynomials()[dealer], x))
 				.collect();
 			vks.push(Commitment::derive_key(part_keys))
 		}
@@ -857,7 +858,7 @@ fn gen_poly_coeffs(deg: u64) -> Vec<[u64; 4]> {
 
 fn poly_eval(coeffs: &Vec<Scalar>, x: &Scalar) -> Scalar {
 	let mut eval = Scalar::zero();
-	for coeff in coeffs.iter() {
+	for coeff in coeffs.iter().rev() {
 		eval *= x;
 		eval += coeff;
 	}

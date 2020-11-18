@@ -135,6 +135,10 @@ fn scalar_from_seed(seed: [u64; 4]) -> Scalar {
 }
 
 impl Pair {
+	pub fn is_correct(&self) -> bool {
+		let g2power = G2Affine::from(G2Affine::generator() * self.secret);
+		return g2power == self.verify.point;
+	}
 	pub fn from_secret(secret: Scalar) -> Self {
 		let verify = VerifyKey::from_secret(&secret);
 		Pair { secret, verify }
@@ -265,25 +269,20 @@ pub struct KeyBox {
 	threshold: u64,
 }
 
-fn lagrange_coef(shares: &Vec<Share>, x: u64) -> Scalar {
+
+fn lagrange_coef(knots: &Vec<Scalar>, knot: Scalar, target: Scalar) -> Scalar {
 	let mut num = Scalar::one();
 	let mut den = Scalar::one();
 
-	for share in shares.iter() {
-		if share.creator == x {
-			continue;
-		}
-		let p = share.creator as u64;
-		num *= Scalar::from(p + 1).neg();
-		if x > p {
-			den *= Scalar::from(x - p);
-		} else {
-			den *= Scalar::from(p - x).neg();
+	for x in knots.iter() {
+		if *x != knot {
+			num *= target - x;
+			den *= Scalar::from(knot - x);
 		}
 	}
-
 	num * den.invert().unwrap()
 }
+
 
 /// The implementation mocks BLS threshold keys by using a set of ed25519 keys.
 /// To be replaced in Milestone 2.
@@ -304,6 +303,8 @@ impl KeyBox {
 		}
 	}
 
+
+
 	#[cfg(any(feature = "full_crypto", feature = "std"))]
 	pub fn generate_share(&self, nonce: &Nonce) -> Share {
 		Share {
@@ -320,10 +321,16 @@ impl KeyBox {
 
 	// Some(share) if succeeded and None if failed for some reason (e.g. not enough shares) -- should add error handling later
 	// Assumption: shares are for the same nonce, are valid, and there are exactly threshold of them
+	#[cfg(any(feature = "full_crypto", feature = "std"))]
 	pub fn combine_shares(&self, shares: &Vec<Share>) -> Randomness {
+		assert!(shares.len() as u64 == self.threshold);
 		let mut sum = G1Projective::identity();
-		for share in shares.iter() {
-			sum += share.data.0 * lagrange_coef(shares, share.creator);
+		let knots = shares
+			.iter()
+			.map(|s| Scalar::from(s.creator + 1))
+			.collect();
+		for (i, share) in shares.iter().enumerate() {
+			sum += share.data.0 * lagrange_coef(&knots, knots[i], Scalar::from(0));
 		}
 
 		Randomness {

@@ -243,7 +243,6 @@ where
 				return;
 			}
 		};
-
 		let (tx, rx) = std::sync::mpsc::channel();
 		let tx = Mutex::new(tx);
 		let url = format!("http://localhost:{}", self.http_rpc_port);
@@ -269,6 +268,7 @@ where
 		let raw_key = rx.recv().unwrap();
 		let share_provider = Pair::from_secret(Scalar::from_raw(raw_key));
 
+
 		self.keybox = Some(KeyBox::new(
 			ix as u64,
 			share_provider,
@@ -276,6 +276,8 @@ where
 			master_key,
 			t,
 		));
+
+
 	}
 }
 
