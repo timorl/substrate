@@ -8,7 +8,7 @@
 //! absence of randomness would cause creating an incorrect block, so there is no point
 //! in that.
 
-use codec::{Decode, Encode};
+use codec::Encode;
 use log::info;
 use parking_lot::Mutex;
 use sc_client_api::backend;
@@ -90,10 +90,6 @@ where
 		let mut proposer_nonce = None;
 		if parent_number + 1.into() >= self.start_beacon_height {
 			let parent_hash = parent_header.hash();
-			info!(
-				"\n\nstart collectig for parent with bn {:?} and hash {:?}\n",
-				parent_number, parent_hash
-			);
 			let nonce = <Block as BlockT>::Hash::encode(&parent_hash);
 			proposer_nonce = Some(nonce);
 		}
@@ -164,10 +160,6 @@ where
 
 				match new_randomness {
 					Ok(ref randomness) => {
-						info!(
-							"\n\nAdding new randomness {:?}\n for nonce {:?} to storage in proposer.\n",
-							new_randomness, <Block as BlockT>::Hash::decode(&mut &randomness.nonce()[..])
-						);
 						let nonce = randomness.nonce();
 						self.available_randomness
 							.lock()
@@ -188,7 +180,6 @@ where
 		match self.nonce {
 			Some(_) => match randomness {
 				Some(bytes) => {
-					info!("Including randomness in inherent_data.");
 					let result = id.put_data(INHERENT_IDENTIFIER, &bytes);
 					if result.is_err() {
 						return async {
@@ -198,6 +189,7 @@ where
 						}
 						.boxed();
 					}
+					info!("Included randomness in inherent_data.");
 				}
 				None => {
 					info!("Randomness not available in propose. Aborting proposal.");

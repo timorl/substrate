@@ -101,9 +101,7 @@ fn get_secret_enc_key(offchain_state: Arc<RwLock<OffchainState>>) -> RawScalar {
 
 fn test_handle_round0(states: &States, my_ix: usize) {
 	// do the round
-	let block_number = 1;
-	System::set_block_number(block_number);
-	DKG::handle_round0(block_number);
+	DKG::handle_round0();
 
 	// check if correct values was submitted on chain
 	let raw_secret = get_secret_enc_key(states.offchain.clone());
@@ -162,14 +160,12 @@ fn set_shares_commes(ix: usize, shares: Vec<Option<EncryptedShare>>, comms: Vec<
 
 fn test_handle_round1(states: &States, my_ix: usize) {
 	// do the round
-	let block_number = 3;
-	System::set_block_number(block_number);
 	let mut seed = [0; 32];
 	(0..32u64)
 		.enumerate()
 		.for_each(|(i, b)| seed[i] = b.pow(2) as u8);
 	states.offchain.write().seed = seed;
-	DKG::handle_round1(block_number);
+	DKG::handle_round1();
 
 	// check if correct values was submitted on chain
 	let raw_poly_coeffs_encoded = states
@@ -212,9 +208,7 @@ fn test_handle_round1(states: &States, my_ix: usize) {
 
 fn test_handle_round2(states: &States) {
 	// do the round
-	let block_number = 5;
-	System::set_block_number(block_number);
-	DKG::handle_round2(block_number);
+	DKG::handle_round2();
 
 	// check if correct values was submitted on chain
 	let tx = states.pool.write().transactions.pop().unwrap();
@@ -247,9 +241,7 @@ fn derive_tsk(my_ix: usize) -> Scalar {
 
 fn test_handle_round3(states: &States, my_ix: usize) {
 	// do the round
-	let block_number = 7;
-	System::set_block_number(block_number);
-	DKG::handle_round3(block_number);
+	DKG::handle_round3();
 
 	// check if correct values was submitted on chain
 	let tsk_encoded = states
@@ -481,4 +473,3 @@ impl Trait for Runtime {
 }
 
 pub type DKG = Module<Runtime>;
-pub type System = frame_system::Module<Runtime>;

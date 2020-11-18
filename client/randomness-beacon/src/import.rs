@@ -110,8 +110,6 @@ where
 	) -> Result<ImportResult, Self::Error> {
 		let block_hash = block.post_hash();
 
-		info!("\n\nimporting block from origin: {:?}\n", block.origin);
-
 		let res = self
 			.inner
 			.import_block(block, new_cache)
@@ -121,8 +119,6 @@ where
 			info!(target: "import", "error when importing to inner {:?}", res);
 			return res;
 		}
-
-		info!(target: "import", "succesfully imported to inner {:?}", res);
 
 		// TODO what sould be first sending nonce or importing?
 		if let Some(nonce) = self.hash_to_nonce(block_hash) {

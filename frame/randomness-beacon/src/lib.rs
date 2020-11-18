@@ -30,7 +30,7 @@
 
 use codec::{Decode, Encode};
 use frame_support::{
-	debug, decl_error, decl_module, decl_storage, traits::Get, traits::Randomness as RandomnessT,
+	decl_error, decl_module, decl_storage, traits::Get, traits::Randomness as RandomnessT,
 	weights::Weight,
 };
 use frame_system::ensure_none;
@@ -103,7 +103,6 @@ impl<T: Trait> Module<T> {
 
 	fn set_master_key() -> bool {
 		if let Some(mk) = T::MasterKey::get() {
-			debug::info!("\n\nRNDBCN got master key {:?}\n", mk);
 			RandomnessVerifier::put(mk);
 			return true;
 		}
@@ -152,10 +151,7 @@ impl<T: Trait> ProvideInherent for Module<T> {
 			return Ok(());
 		}
 
-		debug::info!("\n\n RNDBCK check_inherent at {:?}\n", now);
-
 		if !RandomnessVerifier::exists() {
-			debug::info!("\n\n RNDBCK ERROR no master key\n");
 			return Err(sp_randomness_beacon::inherents::InherentError::VerifyKeyNotSet);
 		}
 		let random_bytes = match call {
@@ -165,14 +161,9 @@ impl<T: Trait> ProvideInherent for Module<T> {
 		let verify_key = Self::verifier();
 		let randomness = Randomness::decode(&mut &*random_bytes).unwrap();
 		if !sp_randomness_beacon::verify_randomness(&verify_key, &randomness) {
-			debug::info!(
-				"\n\n RNDBCK ERROR verification failed for nonce {:?}\n",
-				randomness.nonce()
-			);
 			return Err(sp_randomness_beacon::inherents::InherentError::InvalidRandomBytes);
 		}
 
-		debug::info!("\n\n RNDBCK check_inherent succesful\n");
 		Ok(())
 	}
 }
