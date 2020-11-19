@@ -46,12 +46,16 @@ use sp_dkg::{
 
 mod tests;
 
+// TODO make the implementation of Offchain worker storage fork-aware. This is currently not
+// supported in substrate as only the PERSISTENT version of storage is available and LOCAL
+// is not. Need to implement custom support for forks in the PERSISTENT version.
+
 // TODO handle the situation when the node is not an authority
 
 // TODO do we add protection against biasing?
 
 // n is the number of nodes in the committee
-// node indices are 1-based: 1, 2, ..., n
+// node indices are 0-based: 0, 1, 2, ..., n-1
 // t is the threshold: it is necessary and sufficient to have t shares to combine
 // the degree of the polynomial is thus t-1
 
@@ -400,6 +404,7 @@ impl<T: Trait> Module<T> {
 			comms.push(Commitment::new(poly[i as usize]));
 		}
 
+		// TODO: in Milestone 3 the shares need to be encrypted
 		// 4. send encrypted secret shares
 		let round0_number: T::BlockNumber = T::RoundEnds::get()[0];
 		let hash_round0 = <frame_system::Module<T>>::block_hash(round0_number);
@@ -501,7 +506,7 @@ impl<T: Trait> Module<T> {
 	}
 
 	// TODO move all computations of public stuff to on_finalize
-	// derivie local key pair and master verification key, and send master key to the chain
+	// derive local key pair and master verification key, and send master key to the chain
 	fn handle_round3() {
 		const ALREADY_SET: () = ();
 
