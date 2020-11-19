@@ -15,6 +15,17 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+//! DKG (Distributed Key Generation) Pallet for generating threshold BLS keys without
+//! a trusted dealer. This uses a variant of the classical Pedersen DKG protocol in which
+//! the blockchain is used as a realiable broadcast channel. This way one does not need to
+//! assume synchronicity of the underlying network, only that the committee members have
+//! read access to the blockchain and are able to send transactions, with not too high
+//! of a delay. The pallet as well as the protocol are explained in more detail in the
+//! accompanying README.md, see also any description of the Pedersen DKG protocol (for
+//! instance the original paper https://link.springer.com/chapter/10.1007%2F3-540-46416-6_47).
+//! To configure the pallet one must provide in the config 1) the list of authorities running
+//! the protocol, and 2) the threshold.
+
 #![cfg_attr(not(feature = "std"), no_std)]
 
 use frame_support::{debug, decl_module, decl_storage, traits::Get, Parameter};
