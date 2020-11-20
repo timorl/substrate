@@ -171,8 +171,28 @@ impl Pair {
 	}
 }
 
-#[cfg(any(feature = "full_crypto", feature = "std"))]
-pub type ShareProvider = Pair;
+//#[cfg(any(feature = "full_crypto", feature = "std"))]
+#[derive(Clone, Debug, Encode, Decode)]
+pub struct ShareProvider {
+	id: u64,
+	keys: Pair,
+}
+
+impl ShareProvider {
+	pub fn new(id: u64, keys: Pair) -> Self {
+		ShareProvider { id: id, keys: keys }
+	}
+
+	pub fn id(&self) -> u64 {
+		return self.id;
+	}
+
+	pub fn keys(&self)-> &Pair {
+		return &self.keys;
+	}
+}
+
+
 
 fn poly_eval(coeffs: &Vec<Scalar>, x: &Scalar) -> Scalar {
 	let mut eval = Scalar::zero();
@@ -255,8 +275,7 @@ impl RandomnessVerifier {
 /// A mock for a BLS-based set of threshold keys.
 #[derive(Clone, Encode, Decode, Default)]
 pub struct KeyBox {
-	id: u64,
-	share_provider: Option<Pair>,
+	share_provider: Option<ShareProvider>,
 	verify_keys: Vec<VerifyKey>,
 	master_key: VerifyKey,
 	threshold: u64,
@@ -279,14 +298,12 @@ fn lagrange_coef(knots: &Vec<Scalar>, knot: Scalar, target: Scalar) -> Scalar {
 /// To be replaced in Milestone 2.
 impl KeyBox {
 	pub fn new(
-		id: u64,
-		share_provider: Option<Pair>,
+		share_provider: Option<ShareProvider>,
 		verify_keys: Vec<VerifyKey>,
 		master_key: VerifyKey,
 		threshold: u64,
 	) -> Self {
 		KeyBox {
-			id,
 			share_provider,
 			verify_keys,
 			master_key,
@@ -298,13 +315,17 @@ impl KeyBox {
 	pub fn generate_share(&self, nonce: &Nonce) -> Option<Share> {
 		if let Some(ref share_provider) = self.share_provider {
 			return Some(Share {
-				creator: self.id,
+				creator: share_provider.id(),
 				nonce: nonce.clone(),
-				data: share_provider.sign(&nonce),
+				data: share_provider.keys().sign(&nonce),
 			});
 		}
 
 		None
+	}
+
+	pub fn is_provider(&self) -> bool {
+		self.share_provider.is_some()
 	}
 
 	#[cfg(any(feature = "full_crypto", feature = "std"))]

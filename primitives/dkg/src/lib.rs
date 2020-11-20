@@ -169,7 +169,7 @@ sp_api::decl_runtime_apis! {
 		fn threshold() -> u64;
 		fn authority_index() -> Option<AuthIndex>;
 		fn verification_keys() -> Option<Vec<VerifyKey>>;
-		fn public_keybox_parts() -> Option<(AuthIndex, Vec<VerifyKey>, VerifyKey, u64)>;
+		fn public_keybox_parts() -> Option<(Option<AuthIndex>, Vec<VerifyKey>, VerifyKey, u64)>;
 	}
 }
 

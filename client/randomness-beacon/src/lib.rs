@@ -21,7 +21,7 @@ use sc_network_gossip::{
 use sp_runtime::{generic::BlockId, traits::Block as BlockT};
 
 use sp_dkg::{DKGApi, Pair, Scalar};
-use sp_randomness_beacon::{KeyBox, Nonce, Randomness, Share};
+use sp_randomness_beacon::{KeyBox, Nonce, Randomness, Share, ShareProvider};
 
 use futures::{channel::mpsc::Receiver, prelude::*};
 use parking_lot::Mutex;
@@ -125,12 +125,12 @@ pub struct RandomnessGossip<B: BlockT, C> {
 		B::Hash,
 		(
 			Receiver<TopicNotification>,
-			OutgoingMessage<B>,
+			Option<OutgoingMessage<B>>,
 			futures_timer::Delay,
+			KeyBox,
 			Vec<Share>,
 		),
 	>,
-	keybox: Option<KeyBox>,
 	gossip_engine: Arc<Mutex<GossipEngine<B>>>,
 	randomness_nonce_rx: Receiver<Nonce>,
 	randomness_tx: Option<Sender<Randomness>>,
@@ -164,7 +164,6 @@ where
 		RandomnessGossip {
 			threshold,
 			topics: HashMap::new(),
-			keybox: None,
 			gossip_engine,
 			randomness_nonce_rx,
 			randomness_tx,
@@ -176,7 +175,8 @@ where
 	fn initialize_nonce(
 		&self,
 		nonce: Nonce,
-	) -> (Receiver<TopicNotification>, OutgoingMessage<B>, Vec<Share>) {
+		keybox: &KeyBox,
+	) -> (Receiver<TopicNotification>, Option<OutgoingMessage<B>>, Vec<Share>) {
 		let topic = nonce_to_topic::<B>(nonce.clone());
 
 		let incoming = self
@@ -201,27 +201,23 @@ where
 			})
 			.into_inner();
 
-		let share = self.keybox.as_ref().unwrap().generate_share(&nonce);
 
-		let msg = Message {
-			data: share.encode(),
-		};
-
-		let outgoing = OutgoingMessage::<B> {
-			msg,
-			nonce: nonce,
-			gossip_engine: self.gossip_engine.clone(),
-		};
-
+		let mut message = None;
 		let mut shares = Vec::new();
-		if share.is_some() {
-			shares.push(share.unwrap())
+		let maybe_share = keybox.generate_share(&nonce);
+		if maybe_share.is_some() {
+			let share = maybe_share.unwrap();
+			shares.push(share.clone());
+			message = Some(OutgoingMessage::<B> {
+				msg: Message {data: share.encode()},
+				nonce: nonce,
+				gossip_engine: self.gossip_engine.clone(),
+			});
 		}
-
-		(incoming, outgoing, shares)
+		(incoming, message, shares)
 	}
 
-	fn get_keybox(&mut self, nonce: &Nonce) {
+	fn get_keybox(&mut self, nonce: &Nonce) -> Option<KeyBox> {
 		let block_hash = <B as BlockT>::Hash::decode(&mut &nonce[..]).unwrap();
 
 		use hyper::rt;
@@ -236,38 +232,45 @@ where
 			.public_keybox_parts(&BlockId::Hash(block_hash))
 		{
 			Ok(Some((ix, vks, mvk, t))) => (ix, vks, mvk, t),
-			Ok(None) | Err(_) => return,
+			Ok(None) | Err(_) => return None,
 		};
 		let (tx, rx) = std::sync::mpsc::channel();
 		let tx = Mutex::new(tx);
-		let url = format!("http://localhost:{}", self.http_rpc_port);
-		rt::run(rt::lazy(move || {
-			http::connect(url.as_str())
-				.and_then(move |client: OffchainClient| {
-					client
-						.get_local_storage(
-							StorageKind::PERSISTENT,
-							Bytes(b"dkw::threshold_secret_key".to_vec()),
-						)
-						.map(move |enc_key| {
-							let raw_key = <[u64; 4]>::decode(&mut &enc_key.unwrap()[..]).unwrap();
-							if let Err(e) = tx.lock().send(raw_key) {
-								info!("Error while sending raw_key {:?}", e);
-							}
-						})
-				})
-				.map_err(|e| info!("didn't get key with err {:?}", e))
-		}));
-		let raw_key = rx.recv().unwrap();
-		let share_provider = Pair::from_secret(Scalar::from_raw(raw_key));
 
-		self.keybox = Some(KeyBox::new(
-			ix as u64,
-			Some(share_provider),
+		// TODO: need to adjust this once the fork-aware version of the DKG pallet is ready
+		let mut share_provider = None;
+		if ix.is_some() {
+			let url = format!("http://localhost:{}", self.http_rpc_port);
+			rt::run(rt::lazy(move || {
+				http::connect(url.as_str())
+					.and_then(move |client: OffchainClient| {
+						client
+							.get_local_storage(
+								StorageKind::PERSISTENT,
+								Bytes(b"dkw::threshold_secret_key".to_vec()),
+							)
+							.map(move |enc_key| {
+								let raw_key = <[u64; 4]>::decode(&mut &enc_key.unwrap()[..]).unwrap();
+								if let Err(e) = tx.lock().send(raw_key) {
+									info!("Error while sending raw_key {:?}", e);
+								}
+							})
+					})
+					.map_err(|e| info!("didn't get key with err {:?}", e))
+			}));
+			let raw_key = rx.recv().unwrap();
+			share_provider = Some(ShareProvider::new(
+				ix.unwrap() as u64,
+				Pair::from_secret(Scalar::from_raw(raw_key))
+			));
+		}
+
+		Some(KeyBox::new(
+			share_provider,
 			verification_keys,
 			master_key,
 			t,
-		));
+		))
 	}
 }
 
@@ -306,38 +309,32 @@ where
 			return Poll::Pending;
 		}
 
-		if self.keybox.is_none() {
-			// get the keybox from dkg
-			// TODO maybe it would be better to start collecting shares after some specific block
-			// number, but currently RandomnessGossip is not aware of block numbers
-			// TODO error handling
-			self.get_keybox(new_nonce.as_ref().unwrap());
-			if self.keybox.is_none() {
-				return Poll::Pending;
-			}
-		}
-
 		if new_nonce.is_some() {
 			let new_nonce = new_nonce.unwrap();
-
 			let topic = nonce_to_topic::<B>(new_nonce.clone());
-			// received new nonce, start collecting signatures for it
 			if !self.topics.contains_key(&topic) {
-				let (incoming, outgoing, shares) = self.initialize_nonce(new_nonce.clone());
-				let periodic_sender = futures_timer::Delay::new(SEND_INTERVAL);
-				self.topics
-					.insert(topic, (incoming, outgoing, periodic_sender, shares));
+				// received new nonce, need to fetch the corresponding keybox
+				let maybe_keybox = self.get_keybox(new_nonce.as_ref());
+				if let Some(keybox) = maybe_keybox {
+					let (incoming, msg, shares) = self.initialize_nonce(new_nonce.clone(), &keybox);
+					let periodic_sender = futures_timer::Delay::new(SEND_INTERVAL);
+					self.topics.insert(topic, (incoming, msg, periodic_sender, keybox, shares));
+				} else {
+					info!("Obtained a new nonce {:?} but could not retrieve the corresponding keybox.", new_nonce);
+				}
 			}
 		}
 		let randomness_tx = self.randomness_tx.clone();
-		let keybox = self.keybox.clone().unwrap();
 		let threshold = self.threshold.clone();
 
-		for (_, (incoming, outgoing, periodic_sender, shares)) in self.topics.iter_mut() {
-			while let Poll::Ready(()) = periodic_sender.poll_unpin(cx) {
-				periodic_sender.reset(SEND_INTERVAL);
-				outgoing.send();
+		for (_, (incoming, maybe_msg, periodic_sender, keybox, shares)) in self.topics.iter_mut() {
+			if let Some(msg) = maybe_msg {
+				while let Poll::Ready(()) = periodic_sender.poll_unpin(cx) {
+					periodic_sender.reset(SEND_INTERVAL);
+					msg.send();
+				}
 			}
+
 
 			let poll = incoming.poll_next_unpin(cx);
 			match poll {
@@ -368,12 +365,7 @@ where
 				Poll::Pending => {}
 			}
 		}
-
-		if !self.topics.is_empty() {
-			return Poll::Pending;
-		}
-
-		Poll::Ready(())
+		return Poll::Pending;
 	}
 }
 

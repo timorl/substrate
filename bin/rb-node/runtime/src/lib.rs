@@ -511,7 +511,7 @@ impl_runtime_apis! {
 			DKG::master_verification_key()
 		}
 
-		fn public_keybox_parts() -> Option<(sp_dkg::AuthIndex, Vec<sp_dkg::VerifyKey>, sp_dkg::VerifyKey, u64)> {
+		fn public_keybox_parts() -> Option<(Option<sp_dkg::AuthIndex>, Vec<sp_dkg::VerifyKey>, sp_dkg::VerifyKey, u64)> {
 			DKG::public_keybox_parts()
 		}
 

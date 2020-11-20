@@ -656,11 +656,8 @@ impl<T: Trait> Module<T> {
 		T::MasterKeyReady::get()
 	}
 
-	pub fn public_keybox_parts() -> Option<(AuthIndex, Vec<VerifyKey>, VerifyKey, u64)> {
-		let ix = match Self::my_authority_index() {
-			Some(ix) => ix,
-			None => return None,
-		};
+	pub fn public_keybox_parts() -> Option<(Option<AuthIndex>, Vec<VerifyKey>, VerifyKey, u64)> {
+		let ix = Self::my_authority_index();
 
 		let verification_keys = match Self::verification_keys() {
 			Some(keys) => keys,
