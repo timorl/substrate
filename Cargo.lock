@@ -4895,15 +4895,10 @@ version = "0.1.0"
 dependencies = [
  "frame-support",
  "frame-system",
- "impl-trait-for-tuples",
  "parity-scale-codec",
- "serde",
- "sp-authorship",
- "sp-core",
  "sp-inherents",
  "sp-io",
  "sp-randomness-beacon",
- "sp-runtime",
  "sp-std",
 ]
 

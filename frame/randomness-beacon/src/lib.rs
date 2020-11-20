@@ -28,7 +28,6 @@
 
 #![cfg_attr(not(feature = "std"), no_std)]
 
-use codec::{Decode, Encode};
 use frame_support::{
 	decl_error, decl_module, decl_storage, traits::Get, traits::Randomness as RandomnessT,
 	weights::Weight,
@@ -39,7 +38,7 @@ use sp_randomness_beacon::{
 	inherents::{InherentError, INHERENT_IDENTIFIER},
 	Randomness, VerifyKey,
 };
-use sp_std::{result, vec::Vec};
+use sp_std::result;
 
 pub trait Trait: frame_system::Trait {
 	type StartHeight: Get<Self::BlockNumber>;
@@ -50,7 +49,7 @@ pub trait Trait: frame_system::Trait {
 decl_storage! {
 	trait Store for Module<T: Trait> as RandomnessBeacon {
 		/// Random Bytes for the current block
-		Seed: Vec<u8>;
+		Seed: Randomness;
 		/// Was Seed set in this block?
 		DidUpdate: bool;
 		/// Stores verifier needed to check randomness in blocks
@@ -79,7 +78,7 @@ decl_module! {
 
 		// TODO add verify
 		#[weight = 0]
-		fn set_random_bytes(origin, random_bytes: Vec<u8>)  {
+		fn set_random_bytes(origin, random_bytes: Randomness)  {
 			ensure_none(origin)?;
 
 			assert!(!<Self as Store>::DidUpdate::exists(), "Randomness must be set only once in the block");
@@ -112,7 +111,7 @@ impl<T: Trait> Module<T> {
 }
 
 /// Extracts the randomness seed for the current block from inherent data.
-fn extract_random_bytes(inherent_data: &InherentData) -> Vec<u8> {
+fn extract_random_bytes(inherent_data: &InherentData) -> Randomness {
 	let randomness: Result<Option<Randomness>, _> = inherent_data.get_data(&INHERENT_IDENTIFIER);
 	assert!(
 		randomness.is_ok(),
@@ -124,7 +123,7 @@ fn extract_random_bytes(inherent_data: &InherentData) -> Vec<u8> {
 		randomness.is_some(),
 		"Panic because no random_bytes found in inherent_data."
 	);
-	Randomness::encode(&randomness.unwrap())
+	randomness.unwrap()
 }
 
 impl<T: Trait> ProvideInherent for Module<T> {
@@ -154,12 +153,11 @@ impl<T: Trait> ProvideInherent for Module<T> {
 		if !RandomnessVerifier::exists() {
 			return Err(sp_randomness_beacon::inherents::InherentError::VerifyKeyNotSet);
 		}
-		let random_bytes = match call {
+		let randomness = match call {
 			Call::set_random_bytes(ref random_bytes) => random_bytes.clone(),
 			_ => return Ok(()),
 		};
 		let verify_key = Self::verifier();
-		let randomness = Randomness::decode(&mut &*random_bytes).unwrap();
 		if !sp_randomness_beacon::verify_randomness(&verify_key, &randomness) {
 			return Err(sp_randomness_beacon::inherents::InherentError::InvalidRandomBytes);
 		}

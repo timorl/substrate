@@ -221,7 +221,7 @@ pub struct Share {
 	data: Signature,
 }
 
-#[derive(Encode, Decode, Clone, Debug, Default)]
+#[derive(Encode, Decode, Clone, Debug, Default, PartialEq)]
 pub struct Randomness {
 	nonce: Nonce,
 	data: Signature,
@@ -269,7 +269,6 @@ pub struct KeyBox {
 	threshold: u64,
 }
 
-
 fn lagrange_coef(knots: &Vec<Scalar>, knot: Scalar, target: Scalar) -> Scalar {
 	let mut num = Scalar::one();
 	let mut den = Scalar::one();
@@ -282,7 +281,6 @@ fn lagrange_coef(knots: &Vec<Scalar>, knot: Scalar, target: Scalar) -> Scalar {
 	}
 	num * den.invert().unwrap()
 }
-
 
 /// The implementation mocks BLS threshold keys by using a set of ed25519 keys.
 /// To be replaced in Milestone 2.
@@ -302,8 +300,6 @@ impl KeyBox {
 			threshold,
 		}
 	}
-
-
 
 	#[cfg(any(feature = "full_crypto", feature = "std"))]
 	pub fn generate_share(&self, nonce: &Nonce) -> Share {
@@ -325,10 +321,7 @@ impl KeyBox {
 	pub fn combine_shares(&self, shares: &Vec<Share>) -> Randomness {
 		assert!(shares.len() as u64 == self.threshold);
 		let mut sum = G1Projective::identity();
-		let knots = shares
-			.iter()
-			.map(|s| Scalar::from(s.creator + 1))
-			.collect();
+		let knots = shares.iter().map(|s| Scalar::from(s.creator + 1)).collect();
 		for (i, share) in shares.iter().enumerate() {
 			sum += share.data.0 * lagrange_coef(&knots, knots[i], Scalar::from(0));
 		}
