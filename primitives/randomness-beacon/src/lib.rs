@@ -72,10 +72,6 @@ impl Decode for VerifyKey {
 	}
 }
 
-pub fn verify_randomness(verify_key: &VerifyKey, randomness: &Randomness) -> bool {
-	verify_key.verify(&randomness.nonce, &randomness.data)
-}
-
 impl EncodeLike for VerifyKey {}
 
 pub type Nonce = Vec<u8>;
@@ -241,14 +237,11 @@ impl From<(Nonce, Vec<u8>)> for Randomness {
 	}
 }
 
-/// A mock for BLS public key. An ed25519 key is used for now.
-/// This will be replaced by actual BLS keys in Milestone 2.
-#[derive(Clone)]
+#[derive(Clone, Debug, Default, PartialEq, Encode, Decode)]
 pub struct RandomnessVerifier {
 	master_key: VerifyKey,
 }
 
-#[cfg(any(feature = "full_crypto", feature = "std"))]
 impl RandomnessVerifier {
 	pub fn new(master_key: VerifyKey) -> Self {
 		RandomnessVerifier { master_key }
@@ -263,7 +256,7 @@ impl RandomnessVerifier {
 #[derive(Clone, Encode, Decode, Default)]
 pub struct KeyBox {
 	id: u64,
-	share_provider: Pair,
+	share_provider: Option<Pair>,
 	verify_keys: Vec<VerifyKey>,
 	master_key: VerifyKey,
 	threshold: u64,
@@ -287,7 +280,7 @@ fn lagrange_coef(knots: &Vec<Scalar>, knot: Scalar, target: Scalar) -> Scalar {
 impl KeyBox {
 	pub fn new(
 		id: u64,
-		share_provider: Pair,
+		share_provider: Option<Pair>,
 		verify_keys: Vec<VerifyKey>,
 		master_key: VerifyKey,
 		threshold: u64,
@@ -302,12 +295,16 @@ impl KeyBox {
 	}
 
 	#[cfg(any(feature = "full_crypto", feature = "std"))]
-	pub fn generate_share(&self, nonce: &Nonce) -> Share {
-		Share {
-			creator: self.id,
-			nonce: nonce.clone(),
-			data: self.share_provider.sign(&nonce),
+	pub fn generate_share(&self, nonce: &Nonce) -> Option<Share> {
+		if let Some(ref share_provider) = self.share_provider {
+			return Some(Share {
+				creator: self.id,
+				nonce: nonce.clone(),
+				data: share_provider.sign(&nonce),
+			});
 		}
+
+		None
 	}
 
 	#[cfg(any(feature = "full_crypto", feature = "std"))]
@@ -427,7 +424,7 @@ mod tests {
 		for id in 0..n_members {
 			kbs.push(KeyBox::new(
 				id as u64,
-				share_providers[id].clone(),
+				Some(share_providers[id].clone()),
 				verifiers.clone(),
 				master_key.clone(),
 				threshold as u64,
@@ -437,7 +434,7 @@ mod tests {
 		let nonce = random_nonce();
 		let mut shares = Vec::new();
 		for id in 0..threshold {
-			shares.push(kbs[id].generate_share(&nonce));
+			shares.push(kbs[id].generate_share(&nonce).unwrap());
 		}
 
 		let randomness = kbs[0].combine_shares(&shares);

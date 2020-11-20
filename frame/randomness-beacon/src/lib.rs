@@ -36,14 +36,14 @@ use frame_system::ensure_none;
 use sp_inherents::{InherentData, InherentIdentifier, ProvideInherent};
 use sp_randomness_beacon::{
 	inherents::{InherentError, INHERENT_IDENTIFIER},
-	Randomness, VerifyKey,
+	Randomness, RandomnessVerifier,
 };
 use sp_std::result;
 
 pub trait Trait: frame_system::Trait {
 	type StartHeight: Get<Self::BlockNumber>;
 	type MasterKeyReady: Get<Self::BlockNumber>;
-	type MasterKey: Get<Option<VerifyKey>>;
+	type MasterKey: Get<Option<RandomnessVerifier>>;
 }
 
 decl_storage! {
@@ -53,7 +53,7 @@ decl_storage! {
 		/// Was Seed set in this block?
 		DidUpdate: bool;
 		/// Stores verifier needed to check randomness in blocks
-		RandomnessVerifier get(fn verifier): VerifyKey;
+		Verifier get(fn verifier): RandomnessVerifier;
 	}
 }
 
@@ -69,7 +69,7 @@ decl_module! {
 
 		fn on_initialize(now: T::BlockNumber) -> Weight {
 			if now == T::MasterKeyReady::get() {
-				assert!(!RandomnessVerifier::exists());
+				assert!(!Verifier::exists());
 				assert!(Self::set_master_key());
 			}
 
@@ -102,7 +102,7 @@ impl<T: Trait> Module<T> {
 
 	fn set_master_key() -> bool {
 		if let Some(mk) = T::MasterKey::get() {
-			RandomnessVerifier::put(mk);
+			Verifier::put(mk);
 			return true;
 		}
 
@@ -150,15 +150,14 @@ impl<T: Trait> ProvideInherent for Module<T> {
 			return Ok(());
 		}
 
-		if !RandomnessVerifier::exists() {
+		if !Verifier::exists() {
 			return Err(sp_randomness_beacon::inherents::InherentError::VerifyKeyNotSet);
 		}
 		let randomness = match call {
 			Call::set_random_bytes(ref random_bytes) => random_bytes.clone(),
 			_ => return Ok(()),
 		};
-		let verify_key = Self::verifier();
-		if !sp_randomness_beacon::verify_randomness(&verify_key, &randomness) {
+		if !Self::verifier().verify(&randomness) {
 			return Err(sp_randomness_beacon::inherents::InherentError::InvalidRandomBytes);
 		}
 
@@ -282,7 +281,7 @@ mod tests {
 	fn verifier_correctly_initialized() {
 		new_test_ext().execute_with(|| {
 			assert_eq!(RBeacon::on_initialize(MasterKeyReady::get()), 0);
-			assert!(<RBeacon as Store>::RandomnessVerifier::exists());
+			assert!(<RBeacon as Store>::Verifier::exists());
 		});
 	}
 

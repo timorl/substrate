@@ -213,7 +213,12 @@ where
 			gossip_engine: self.gossip_engine.clone(),
 		};
 
-		(incoming, outgoing, vec![share])
+		let mut shares = Vec::new();
+		if share.is_some() {
+			shares.push(share.unwrap())
+		}
+
+		(incoming, outgoing, shares)
 	}
 
 	fn get_keybox(&mut self, nonce: &Nonce) {
@@ -258,7 +263,7 @@ where
 
 		self.keybox = Some(KeyBox::new(
 			ix as u64,
-			share_provider,
+			Some(share_provider),
 			verification_keys,
 			master_key,
 			t,

@@ -289,11 +289,14 @@ parameter_types! {
 	pub const StartHeight: u32 = START_HEIGHT;
 }
 
+use sp_randomness_beacon::RandomnessVerifier;
 pub struct GetMasterKey;
-impl Get<Option<sp_randomness_beacon::VerifyKey>> for GetMasterKey {
-	fn get() -> Option<sp_randomness_beacon::VerifyKey> {
+impl Get<Option<RandomnessVerifier>> for GetMasterKey {
+	fn get() -> Option<RandomnessVerifier> {
 		if pallet_dkg::MasterVerificationKey::exists() {
-			return Some(pallet_dkg::MasterVerificationKey::get());
+			return Some(RandomnessVerifier::new(
+				pallet_dkg::MasterVerificationKey::get(),
+			));
 		}
 		None
 	}
