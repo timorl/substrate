@@ -3,10 +3,11 @@
 mod commitments;
 mod threshold_signatures;
 
-pub use commitments::{
-	AuthIndex, Commitment, EncryptionKey, EncryptionPublicKey, RawScalar, Scalar,
-};
+pub use commitments::{Commitment, EncryptionKey, EncryptionPublicKey, Scalar};
 pub use threshold_signatures::{KeyBox, Share, ShareProvider, Signature, VerifyKey};
+
+pub type AuthIndex = u64;
+pub type RawSecret = [u64; 4];
 
 use sp_core::crypto::KeyTypeId;
 pub const KEY_TYPE: KeyTypeId = KeyTypeId(*b"dkg!");

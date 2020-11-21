@@ -5,7 +5,6 @@
 //! which has the transmitting end in block import (here) and the receiving end
 //! in a RandomnessGossip component.
 
-use codec::Encode;
 use futures::channel::mpsc::Sender;
 use log::info;
 use sc_client_api::{backend::AuxStore, BlockOf};
@@ -15,7 +14,6 @@ use sp_blockchain::{well_known_cache_keys::Id as CacheKeyId, HeaderBackend, Prov
 use sp_consensus::{
 	BlockCheckParams, BlockImport, BlockImportParams, Error as ConsensusError, ImportResult,
 };
-use sp_randomness_beacon::Nonce;
 
 use sp_runtime::traits::Block as BlockT;
 use std::{collections::HashMap, marker, sync::Arc};
@@ -35,13 +33,14 @@ impl std::convert::From<Error> for ConsensusError {
 	}
 }
 
+use super::Nonce;
 use super::ShareBytes;
 
 pub struct RandomnessBeaconBlockImport<B: BlockT, I, C> {
 	inner: I,
 	client: Arc<C>,
-	random_bytes_buf: HashMap<Nonce, Option<ShareBytes>>,
-	randomness_nonce_tx: Sender<Nonce>,
+	random_bytes_buf: HashMap<Nonce<B>, Option<ShareBytes>>,
+	randomness_nonce_tx: Sender<Nonce<B>>,
 	_marker: marker::PhantomData<B>,
 }
 
@@ -65,23 +64,13 @@ where
 	C: ProvideRuntimeApi<B> + Send + Sync + HeaderBackend<B> + AuxStore + ProvideCache<B> + BlockOf,
 	C::Api: BlockBuilderApi<B, Error = sp_blockchain::Error>,
 {
-	pub fn new(inner: I, client: Arc<C>, randomness_nonce_tx: Sender<Nonce>) -> Self {
+	pub fn new(inner: I, client: Arc<C>, randomness_nonce_tx: Sender<Nonce<B>>) -> Self {
 		Self {
 			inner,
 			client,
 			random_bytes_buf: HashMap::new(),
 			randomness_nonce_tx,
 			_marker: marker::PhantomData,
-		}
-	}
-	// Returns None is hash was already processed.
-	fn hash_to_nonce(&mut self, hash: <B as BlockT>::Hash) -> Option<Nonce> {
-		// Check if hash was already processed
-		// TODO: add some check if we already processed the hash
-		let nonce = <B as BlockT>::Hash::encode(&hash);
-		match self.random_bytes_buf.get(&nonce) {
-			Some(_) => return None,
-			None => return Some(nonce),
 		}
 	}
 }
@@ -108,7 +97,7 @@ where
 		block: BlockImportParams<B, Self::Transaction>,
 		new_cache: HashMap<CacheKeyId, Vec<u8>>,
 	) -> Result<ImportResult, Self::Error> {
-		let block_hash = block.post_hash();
+		let nonce = block.post_hash();
 
 		let res = self
 			.inner
@@ -121,7 +110,8 @@ where
 		}
 
 		// TODO what sould be first sending nonce or importing?
-		if let Some(nonce) = self.hash_to_nonce(block_hash) {
+		// TODO: add some check if we already processed the hash
+		if let None = self.random_bytes_buf.get(&nonce) {
 			if let Err(err) = self.randomness_nonce_tx.try_send(nonce.clone()) {
 				info!(target: "import", "error when try_send topic through notifier {}", err);
 				return Err(Error::TransmitErr.into());

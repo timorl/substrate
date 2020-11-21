@@ -5,8 +5,9 @@
 pub mod inherents;
 
 use codec::{Decode, Encode};
-use sp_dkg::{Signature, VerifyKey};
+use sp_dkg::{KeyBox, RawSecret, Share, ShareProvider, Signature, VerifyKey};
 use sp_runtime::traits::NumberFor;
+use sp_std::marker;
 use sp_std::vec::Vec;
 
 sp_api::decl_runtime_apis! {
@@ -15,15 +16,13 @@ sp_api::decl_runtime_apis! {
 	   }
 }
 
-pub type Nonce = Vec<u8>;
-
 #[derive(Encode, Decode, Clone, Debug, Default, PartialEq)]
-pub struct Randomness {
+pub struct Randomness<Nonce> {
 	nonce: Nonce,
 	data: Signature,
 }
 
-impl Randomness {
+impl<Nonce: Clone> Randomness<Nonce> {
 	pub fn new(nonce: Nonce, data: Signature) -> Self {
 		Randomness { nonce, data }
 	}
@@ -43,7 +42,67 @@ impl RandomnessVerifier {
 		RandomnessVerifier { master_key }
 	}
 
-	pub fn verify(&self, randomness: &Randomness) -> bool {
-		self.master_key.verify(&randomness.nonce, &randomness.data)
+	pub fn verify<Nonce: Encode>(&self, randomness: &Randomness<Nonce>) -> bool {
+		self.master_key
+			.verify(&randomness.nonce.encode(), &randomness.data)
+	}
+}
+
+#[derive(Clone, Encode, Decode)]
+pub struct RandomnessShare<Nonce: Encode + Decode> {
+	nonce: Nonce,
+	share: Share,
+}
+
+pub struct RBBox<Nonce> {
+	keybox: KeyBox,
+	_marker: marker::PhantomData<Nonce>,
+}
+
+impl<Nonce: Encode + Decode + Clone> RBBox<Nonce> {
+	pub fn new(
+		ix: Option<u64>,
+		raw_secret: Option<RawSecret>,
+		verification_keys: Vec<VerifyKey>,
+		master_key: VerifyKey,
+		threshold: u64,
+	) -> Self {
+		let sp = raw_secret.map(|rs| ShareProvider::from_raw_secret(ix.unwrap(), rs));
+		RBBox {
+			keybox: KeyBox::new(sp, verification_keys, master_key, threshold),
+			_marker: marker::PhantomData,
+		}
+	}
+
+	pub fn generate_randomness_share(&self, nonce: Nonce) -> Option<RandomnessShare<Nonce>> {
+		let msg = nonce.encode();
+		let maybe_share = self.keybox.generate_share(&msg);
+		if let Some(share) = maybe_share {
+			return Some(RandomnessShare { nonce, share });
+		}
+		None
+	}
+
+	pub fn verify_randomness_share(&self, randomness_share: &RandomnessShare<Nonce>) -> bool {
+		let msg = randomness_share.nonce.encode();
+		self.keybox.verify_share(&msg, &randomness_share.share)
+	}
+
+	pub fn combine_shares(
+		&self,
+		randomness_shares: &Vec<RandomnessShare<Nonce>>,
+	) -> Randomness<Nonce> {
+		let shares = randomness_shares
+			.iter()
+			.map(|rs| rs.share.clone())
+			.collect();
+		Randomness {
+			nonce: randomness_shares[0].nonce.clone(),
+			data: self.keybox.combine_shares(&shares),
+		}
+	}
+
+	pub fn threshold(&self) -> u64 {
+		self.keybox.threshold()
 	}
 }

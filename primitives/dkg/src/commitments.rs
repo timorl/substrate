@@ -8,8 +8,7 @@ use crate::threshold_signatures::VerifyKey;
 pub use bls12_381::Scalar;
 use bls12_381::{G1Affine, G2Affine, G2Projective};
 
-pub type AuthIndex = u32;
-pub type RawScalar = [u64; 4];
+use super::RawSecret;
 
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct EncryptionPublicKey {
@@ -18,7 +17,7 @@ pub struct EncryptionPublicKey {
 }
 
 impl EncryptionPublicKey {
-	pub fn from_raw_scalar(raw_scalar: RawScalar) -> Self {
+	pub fn from_raw_scalar(raw_scalar: RawSecret) -> Self {
 		let scalar = Scalar::from_raw(raw_scalar);
 
 		Self::from_scalar(scalar)

@@ -20,8 +20,8 @@ use sc_network_gossip::{
 
 use sp_runtime::{generic::BlockId, traits::Block as BlockT};
 
-use sp_dkg::{DKGApi, KeyBox, Scalar, Share, ShareProvider};
-use sp_randomness_beacon::{Nonce, Randomness};
+use sp_dkg::DKGApi;
+use sp_randomness_beacon::{RBBox, Randomness, RandomnessShare};
 
 use futures::{channel::mpsc::Receiver, prelude::*};
 use parking_lot::Mutex;
@@ -32,6 +32,8 @@ use std::{
 	task::{Context, Poll},
 	time,
 };
+
+pub type Nonce<B> = <B as BlockT>::Hash;
 
 const RANDOMNESS_BEACON_ID: [u8; 4] = *b"rndb";
 const RB_PROTOCOL_NAME: &'static str = "/randomness_beacon";
@@ -44,18 +46,13 @@ pub type ShareBytes = Vec<u8>;
 
 #[derive(Debug, Clone, Encode, Decode)]
 pub struct Message {
-	pub data: Vec<u8>,
-	pub share: ShareBytes,
+	share: ShareBytes,
 }
 
 #[derive(Debug, Encode, Decode)]
-pub struct GossipMessage {
-	pub nonce: Nonce,
-	pub message: Message,
-}
-
-fn nonce_to_topic<B: BlockT>(nonce: Nonce) -> B::Hash {
-	B::Hash::decode(&mut &*nonce).unwrap()
+pub struct GossipMessage<B: BlockT> {
+	nonce: Nonce<B>,
+	message: Message,
 }
 
 pub struct GossipValidator {}
@@ -83,9 +80,9 @@ impl<B: BlockT> Validator<B> for GossipValidator {
 		_sender: &PeerId,
 		data: &[u8],
 	) -> ValidationResult<B::Hash> {
-		match GossipMessage::decode(&mut data.clone()) {
+		match GossipMessage::<B>::decode(&mut data.clone()) {
 			Ok(gm) => {
-				let topic = nonce_to_topic::<B>(gm.nonce);
+				let topic = gm.nonce;
 				ValidationResult::ProcessAndKeep(topic)
 			}
 			Err(e) => {
@@ -102,18 +99,18 @@ impl<B: BlockT> Validator<B> for GossipValidator {
 
 #[derive(Clone)]
 pub struct OutgoingMessage<B: BlockT> {
-	nonce: Nonce,
+	nonce: Nonce<B>,
 	msg: Message,
 	gossip_engine: Arc<Mutex<GossipEngine<B>>>,
 }
 
 impl<B: BlockT> OutgoingMessage<B> {
 	fn send(&self) {
-		let message = GossipMessage {
+		let message = GossipMessage::<B> {
 			nonce: self.nonce.clone(),
 			message: self.msg.clone(),
 		};
-		let topic = nonce_to_topic::<B>(self.nonce.clone());
+		let topic = self.nonce.clone();
 		self.gossip_engine
 			.lock()
 			.gossip_message(topic, message.encode(), true);
@@ -128,13 +125,13 @@ pub struct RandomnessGossip<B: BlockT, C> {
 			Receiver<TopicNotification>,
 			Option<OutgoingMessage<B>>,
 			futures_timer::Delay,
-			KeyBox,
-			Vec<Share>,
+			RBBox<Nonce<B>>,
+			Vec<RandomnessShare<Nonce<B>>>,
 		),
 	>,
 	gossip_engine: Arc<Mutex<GossipEngine<B>>>,
-	randomness_nonce_rx: Receiver<Nonce>,
-	randomness_tx: Option<Sender<Randomness>>,
+	randomness_nonce_rx: Receiver<Nonce<B>>,
+	randomness_tx: Option<Sender<Randomness<Nonce<B>>>>,
 	dkg_api: Arc<C>,
 	http_rpc_port: u16,
 }
@@ -149,9 +146,9 @@ where
 {
 	pub fn new<N: Network<B> + Send + Clone + 'static>(
 		threshold: u64,
-		randomness_nonce_rx: Receiver<Nonce>,
+		randomness_nonce_rx: Receiver<Nonce<B>>,
 		network: N,
-		randomness_tx: Option<Sender<Randomness>>,
+		randomness_tx: Option<Sender<Randomness<Nonce<B>>>>,
 		dkg_api: Arc<C>,
 		http_rpc_port: u16,
 	) -> Self {
@@ -175,21 +172,21 @@ where
 
 	fn initialize_nonce(
 		&self,
-		nonce: Nonce,
-		keybox: &KeyBox,
+		nonce: Nonce<B>,
+		rbbox: &RBBox<Nonce<B>>,
 	) -> (
 		Receiver<TopicNotification>,
 		Option<OutgoingMessage<B>>,
-		Vec<Share>,
+		Vec<RandomnessShare<Nonce<B>>>,
 	) {
-		let topic = nonce_to_topic::<B>(nonce.clone());
+		let topic = nonce.clone();
 
 		let incoming = self
 			.gossip_engine
 			.lock()
 			.messages_for(topic)
 			.filter_map(move |notification| {
-				let decoded = GossipMessage::decode(&mut &notification.message[..]);
+				let decoded = GossipMessage::<B>::decode(&mut &notification.message[..]);
 				match decoded {
 					Ok(gm) => {
 						// Some filtering may happen here
@@ -208,13 +205,12 @@ where
 
 		let mut message = None;
 		let mut shares = Vec::new();
-		let maybe_share = keybox.generate_share(&nonce);
+		let maybe_share = rbbox.generate_randomness_share(nonce.clone());
 		if maybe_share.is_some() {
 			let share = maybe_share.unwrap();
 			shares.push(share.clone());
 			message = Some(OutgoingMessage::<B> {
 				msg: Message {
-					data: nonce.clone(),
 					share: share.encode(),
 				},
 				nonce: nonce,
@@ -224,8 +220,8 @@ where
 		(incoming, message, shares)
 	}
 
-	fn get_keybox(&mut self, nonce: &Nonce) -> Option<KeyBox> {
-		let block_hash = <B as BlockT>::Hash::decode(&mut &nonce[..]).unwrap();
+	fn get_rbbox(&mut self, nonce: &Nonce<B>) -> Option<RBBox<Nonce<B>>> {
+		let block_hash = nonce.clone();
 
 		use hyper::rt;
 		use hyper::rt::Future;
@@ -245,7 +241,7 @@ where
 		let tx = Mutex::new(tx);
 
 		// TODO: need to adjust this once the fork-aware version of the DKG pallet is ready
-		let mut share_provider = None;
+		let mut raw_key = None;
 		if ix.is_some() {
 			let url = format!("http://localhost:{}", self.http_rpc_port);
 			rt::run(rt::lazy(move || {
@@ -266,19 +262,10 @@ where
 					})
 					.map_err(|e| info!("didn't get key with err {:?}", e))
 			}));
-			let raw_key = rx.recv().unwrap();
-			share_provider = Some(ShareProvider::from_secret(
-				ix.unwrap() as u64,
-				Scalar::from_raw(raw_key),
-			));
+			raw_key = rx.recv().ok();
 		}
 
-		Some(KeyBox::new(
-			share_provider,
-			verification_keys,
-			master_key,
-			t,
-		))
+		Some(RBBox::new(ix, raw_key, verification_keys, master_key, t))
 	}
 }
 
@@ -319,24 +306,27 @@ where
 
 		if new_nonce.is_some() {
 			let new_nonce = new_nonce.unwrap();
-			let topic = nonce_to_topic::<B>(new_nonce.clone());
+			let topic = new_nonce.clone();
 			if !self.topics.contains_key(&topic) {
-				// received new nonce, need to fetch the corresponding keybox
-				let maybe_keybox = self.get_keybox(new_nonce.as_ref());
-				if let Some(keybox) = maybe_keybox {
-					let (incoming, msg, shares) = self.initialize_nonce(new_nonce.clone(), &keybox);
+				// received new nonce, need to fetch the corresponding rbbox
+				let maybe_rbbox = self.get_rbbox(&new_nonce);
+				if let Some(rbbox) = maybe_rbbox {
+					let (incoming, msg, shares) = self.initialize_nonce(new_nonce.clone(), &rbbox);
 					let periodic_sender = futures_timer::Delay::new(SEND_INTERVAL);
 					self.topics
-						.insert(topic, (incoming, msg, periodic_sender, keybox, shares));
+						.insert(topic, (incoming, msg, periodic_sender, rbbox, shares));
 				} else {
-					info!("Obtained a new nonce {:?} but could not retrieve the corresponding keybox.", new_nonce);
+					info!(
+						"Obtained a new nonce {:?} but could not retrieve the corresponding rbbox.",
+						new_nonce
+					);
 				}
 			}
 		}
 		let randomness_tx = self.randomness_tx.clone();
 		let threshold = self.threshold.clone();
 
-		for (_, (incoming, maybe_msg, periodic_sender, keybox, shares)) in self.topics.iter_mut() {
+		for (_, (incoming, maybe_msg, periodic_sender, rbbox, shares)) in self.topics.iter_mut() {
 			if let Some(msg) = maybe_msg {
 				while let Poll::Ready(()) = periodic_sender.poll_unpin(cx) {
 					periodic_sender.reset(SEND_INTERVAL);
@@ -347,17 +337,14 @@ where
 			let poll = incoming.poll_next_unpin(cx);
 			match poll {
 				Poll::Ready(Some(notification)) => {
-					let GossipMessage { message, .. } =
-						GossipMessage::decode(&mut &notification.message[..]).unwrap();
-					let msg = &message.data;
-					let share: Share = Decode::decode(&mut &*message.share).unwrap();
-					if keybox.verify_share(msg, &share) {
+					let GossipMessage::<B> { message, .. } =
+						GossipMessage::<B>::decode(&mut &notification.message[..]).unwrap();
+					let share = RandomnessShare::decode(&mut &*message.share).unwrap();
+					if rbbox.verify_randomness_share(&share) {
 						shares.push(share);
 						// TODO: the following needs an overhaul
 						if shares.len() == threshold as usize {
-							let nonce = message.data.clone();
-							let data = keybox.combine_shares(shares);
-							let randomness = Randomness::new(nonce, data);
+							let randomness = rbbox.combine_shares(shares);
 
 							// When randomness succesfully combined, notify block proposer
 							if let Some(ref randomness_tx) = randomness_tx {

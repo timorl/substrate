@@ -80,6 +80,8 @@ impl VerifyKey {
 	}
 }
 
+use super::RawSecret;
+
 #[derive(Clone, Debug, PartialEq, Default)]
 pub struct ShareProvider {
 	id: u64,
@@ -116,12 +118,12 @@ impl Decode for ShareProvider {
 #[cfg(feature = "std")]
 fn random_scalar() -> Scalar {
 	let mut rng = thread_rng();
-	let seed = [rng.gen(), rng.gen(), rng.gen(), rng.gen()];
-	scalar_from_seed(seed)
+	let raw_secret = [rng.gen(), rng.gen(), rng.gen(), rng.gen()];
+	scalar_from_raw_secret(raw_secret)
 }
 
-fn scalar_from_seed(seed: [u64; 4]) -> Scalar {
-	Scalar::from_raw(seed)
+fn scalar_from_raw_secret(raw_secret: RawSecret) -> Scalar {
+	Scalar::from_raw(raw_secret)
 }
 
 impl ShareProvider {
@@ -141,8 +143,8 @@ impl ShareProvider {
 		Self::from_secret(id, secret)
 	}
 
-	pub fn from_seed(id: u64, seed: [u64; 4]) -> Self {
-		let secret = scalar_from_seed(seed);
+	pub fn from_raw_secret(id: u64, seed: RawSecret) -> Self {
+		let secret = scalar_from_raw_secret(seed);
 		Self::from_secret(id, secret)
 	}
 

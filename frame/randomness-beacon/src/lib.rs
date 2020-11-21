@@ -50,7 +50,7 @@ pub trait Trait: frame_system::Trait {
 decl_storage! {
 	trait Store for Module<T: Trait> as RandomnessBeacon {
 		/// Random Bytes for the current block
-		Seed: Randomness;
+		Seed: Randomness<T::Hash>;
 		/// Was Seed set in this block?
 		DidUpdate: bool;
 		// Stores verifier needed to check randomness in blocks
@@ -79,7 +79,7 @@ decl_module! {
 
 		// TODO add verify
 		#[weight = 0]
-		fn set_random_bytes(origin, random_bytes: Randomness)  {
+		fn set_random_bytes(origin, random_bytes: Randomness<T::Hash>)  {
 			ensure_none(origin)?;
 
 			assert!(!<Self as Store>::DidUpdate::exists(), "Randomness must be set only once in the block");
@@ -112,8 +112,9 @@ impl<T: Trait> Module<T> {
 }
 
 /// Extracts the randomness seed for the current block from inherent data.
-fn extract_random_bytes<T: Trait>(inherent_data: &InherentData) -> Randomness {
-	let randomness: Result<Option<Randomness>, _> = inherent_data.get_data(&INHERENT_IDENTIFIER);
+fn extract_random_bytes<T: Trait>(inherent_data: &InherentData) -> Randomness<T::Hash> {
+	let randomness: Result<Option<Randomness<T::Hash>>, _> =
+		inherent_data.get_data(&INHERENT_IDENTIFIER);
 	assert!(
 		randomness.is_ok(),
 		"Panic because of error in retrieving inherent_data with err {:?}.",

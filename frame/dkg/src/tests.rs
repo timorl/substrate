@@ -90,13 +90,13 @@ fn init(my_id: sp_dkg::crypto::AuthorityId) -> usize {
 		.unwrap()
 }
 
-fn get_secret_enc_key(offchain_state: Arc<RwLock<OffchainState>>) -> RawScalar {
+fn get_secret_enc_key(offchain_state: Arc<RwLock<OffchainState>>) -> RawSecret {
 	let raw_secret_encoded = offchain_state
 		.read()
 		.persistent_storage
 		.get(b"", b"dkw::enc_key")
 		.unwrap();
-	<RawScalar>::decode(&mut &raw_secret_encoded[..]).unwrap()
+	<RawSecret>::decode(&mut &raw_secret_encoded[..]).unwrap()
 }
 
 fn test_handle_round0(states: &States, my_ix: usize) {
@@ -174,7 +174,7 @@ fn test_handle_round1(states: &States, my_ix: usize) {
 		.persistent_storage
 		.get(b"", b"dkw::secret_poly")
 		.unwrap();
-	let raw_poly_coeffs = <Vec<RawScalar>>::decode(&mut &raw_poly_coeffs_encoded[..]).unwrap();
+	let raw_poly_coeffs = <Vec<RawSecret>>::decode(&mut &raw_poly_coeffs_encoded[..]).unwrap();
 	let poly = raw_poly_coeffs
 		.into_iter()
 		.map(|raw| Scalar::from_raw(raw))
@@ -277,7 +277,7 @@ fn test_handle_round3(states: &States, my_ix: usize) {
 		.persistent_storage
 		.get(b"", b"dkw::secret_poly")
 		.unwrap();
-	let raw_poly_coeffs = <Vec<RawScalar>>::decode(&mut &raw_poly_coeffs_encoded[..]).unwrap();
+	let raw_poly_coeffs = <Vec<RawSecret>>::decode(&mut &raw_poly_coeffs_encoded[..]).unwrap();
 	let local_secret = Scalar::from_raw(raw_poly_coeffs[0]);
 	let mut msk = local_secret;
 	for ix in 0..N_MEMBERS {

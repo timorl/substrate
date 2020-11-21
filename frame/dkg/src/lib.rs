@@ -41,7 +41,7 @@ use sp_runtime::{
 use sp_std::{convert::TryInto, vec::Vec};
 
 use sp_dkg::{
-	AuthIndex, Commitment, EncryptionKey, EncryptionPublicKey, RawScalar, Scalar, VerifyKey,
+	AuthIndex, Commitment, EncryptionKey, EncryptionPublicKey, RawSecret, Scalar, VerifyKey,
 };
 
 mod tests;
@@ -330,7 +330,7 @@ impl<T: Trait> Module<T> {
 
 		// TODO: encrypt the key in the store?
 		let val = StorageValueRef::persistent(b"dkw::enc_key");
-		let res = val.mutate(|last_set: Option<Option<RawScalar>>| match last_set {
+		let res = val.mutate(|last_set: Option<Option<RawSecret>>| match last_set {
 			Some(Some(_)) => Err(ALREADY_SET),
 			_ => Ok(gen_raw_scalar()),
 		});
@@ -367,7 +367,7 @@ impl<T: Trait> Module<T> {
 		let n_members = Self::authorities().len();
 		let threshold = Threshold::get();
 		let val = StorageValueRef::persistent(b"dkw::secret_poly");
-		let res = val.mutate(|last_set: Option<Option<Vec<RawScalar>>>| match last_set {
+		let res = val.mutate(|last_set: Option<Option<Vec<RawSecret>>>| match last_set {
 			Some(Some(_)) => Err(ALREADY_SET),
 			_ => Ok(gen_poly_coeffs(threshold - 1)),
 		});
@@ -691,7 +691,7 @@ impl<T: Trait> sp_runtime::BoundToRuntimeAppPublic for Module<T> {
 	type Public = T::AuthorityId;
 }
 
-fn u8_array_to_raw_scalar(bytes: [u8; 32]) -> RawScalar {
+fn u8_array_to_raw_scalar(bytes: [u8; 32]) -> RawSecret {
 	let mut out = [0u64; 4];
 	for i in 0..4 {
 		out[i] = u64::from_le_bytes(
@@ -703,11 +703,11 @@ fn u8_array_to_raw_scalar(bytes: [u8; 32]) -> RawScalar {
 	out
 }
 
-fn gen_raw_scalar() -> RawScalar {
+fn gen_raw_scalar() -> RawSecret {
 	u8_array_to_raw_scalar(sp_io::offchain::random_seed())
 }
 
-fn gen_poly_coeffs(deg: u64) -> Vec<RawScalar> {
+fn gen_poly_coeffs(deg: u64) -> Vec<RawSecret> {
 	let mut coeffs = Vec::new();
 	for _ in 0..deg + 1 {
 		coeffs.push(gen_raw_scalar());

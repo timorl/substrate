@@ -8,14 +8,12 @@
 //! absence of randomness would cause creating an incorrect block, so there is no point
 //! in that.
 
-use codec::Encode;
 use log::info;
 use parking_lot::Mutex;
 use sc_client_api::backend;
 use sp_api::{ApiExt, ProvideRuntimeApi};
 use sp_blockchain::HeaderBackend;
 use sp_core::traits::SpawnNamed;
-use sp_randomness_beacon::{inherents::INHERENT_IDENTIFIER, Randomness};
 use sp_transaction_pool::TransactionPool;
 use std::{collections::HashMap, pin::Pin, sync::mpsc::Receiver, sync::Arc, time};
 
@@ -30,6 +28,8 @@ use sp_runtime::traits::{Block as BlockT, DigestFor, Header as HeaderT, NumberFo
 
 use prometheus_endpoint::Registry as PrometheusRegistry;
 
+use sp_randomness_beacon::{inherents::INHERENT_IDENTIFIER, Randomness};
+
 use super::Nonce;
 
 /// Proposer factory.
@@ -39,9 +39,9 @@ pub struct ProposerFactory<A, B, Block: BlockT, C> {
 	/// Randomness Beacon starting height.
 	start_beacon_height: NumberFor<Block>,
 	/// Receiver of new randomness.
-	randomness_rx: Arc<Mutex<Receiver<Randomness>>>,
+	randomness_rx: Arc<Mutex<Receiver<Randomness<Nonce<Block>>>>>,
 	/// The set of available random bytes.
-	available_randomness: Arc<Mutex<HashMap<Nonce, Randomness>>>,
+	available_randomness: Arc<Mutex<HashMap<Nonce<Block>, Randomness<Nonce<Block>>>>>,
 }
 
 impl<A, B, Block: BlockT, C> ProposerFactory<A, B, Block, C> {
@@ -51,7 +51,7 @@ impl<A, B, Block: BlockT, C> ProposerFactory<A, B, Block, C> {
 		transaction_pool: Arc<A>,
 		prometheus: Option<&PrometheusRegistry>,
 		start_beacon_height: NumberFor<Block>,
-		randomness_rx: Arc<Mutex<Receiver<Randomness>>>,
+		randomness_rx: Arc<Mutex<Receiver<Randomness<Nonce<Block>>>>>,
 	) -> Self {
 		ProposerFactory {
 			inner: sc_basic_authorship::ProposerFactory::new(
@@ -89,9 +89,7 @@ where
 		let parent_number = *parent_header.number();
 		let mut proposer_nonce = None;
 		if parent_number + 1.into() >= self.start_beacon_height {
-			let parent_hash = parent_header.hash();
-			let nonce = <Block as BlockT>::Hash::encode(&parent_hash);
-			proposer_nonce = Some(nonce);
+			proposer_nonce = Some(parent_header.hash());
 		}
 		future::ready(Ok(Proposer {
 			inner: self
@@ -106,9 +104,9 @@ where
 
 pub struct Proposer<B, Block: BlockT, C, A: TransactionPool> {
 	inner: sc_basic_authorship::Proposer<B, Block, C, A>,
-	available_randomness: Arc<Mutex<HashMap<Nonce, Randomness>>>,
-	randomness_rx: Arc<Mutex<Receiver<Randomness>>>,
-	nonce: Option<Nonce>,
+	available_randomness: Arc<Mutex<HashMap<Nonce<Block>, Randomness<Nonce<Block>>>>>,
+	randomness_rx: Arc<Mutex<Receiver<Randomness<Nonce<Block>>>>>,
+	nonce: Option<Nonce<Block>>,
 }
 
 impl<A, B, Block, C> sp_consensus::Proposer<Block> for Proposer<B, Block, C, A>
