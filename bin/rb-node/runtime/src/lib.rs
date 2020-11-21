@@ -290,8 +290,8 @@ parameter_types! {
 }
 
 use sp_randomness_beacon::RandomnessVerifier;
-pub struct GetMasterKey;
-impl Get<Option<RandomnessVerifier>> for GetMasterKey {
+pub struct GetRandomnessVerifier;
+impl Get<Option<RandomnessVerifier>> for GetRandomnessVerifier {
 	fn get() -> Option<RandomnessVerifier> {
 		if pallet_dkg::MasterVerificationKey::exists() {
 			return Some(RandomnessVerifier::new(
@@ -304,8 +304,8 @@ impl Get<Option<RandomnessVerifier>> for GetMasterKey {
 
 impl pallet_randomness_beacon::Trait for Runtime {
 	type StartHeight = StartHeight;
-	type MasterKey = GetMasterKey;
-	type MasterKeyReady = MasterKeyReady;
+	type RandomnessVerifierReady = MasterKeyReady;
+	type RandomnessVerifier = GetRandomnessVerifier;
 }
 
 impl<LocalCall> frame_system::offchain::CreateSignedTransaction<LocalCall> for Runtime

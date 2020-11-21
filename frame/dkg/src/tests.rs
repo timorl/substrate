@@ -11,7 +11,7 @@ use sp_core::{
 	},
 	H256,
 };
-use sp_dkg::{KeyBox, Pair};
+use sp_dkg::{KeyBox, ShareProvider};
 use sp_keystore::{
 	testing::KeyStore,
 	{KeystoreExt, SyncCryptoStore},
@@ -334,19 +334,17 @@ fn test_keybox(states: &States, my_ix: usize) {
 				.unwrap();
 			let tsk =
 				Scalar::from_bytes(&<[u8; 32]>::decode(&mut &tsk_encoded[..]).unwrap()).unwrap();
-			let tpair = Pair::from_secret(tsk);
+			let tsp = ShareProvider::from_secret(ix as u64, tsk);
 			kbs.push(KeyBox::new(
-				my_ix as u64,
-				tpair,
+				Some(tsp),
 				vks.clone(),
 				mvk.clone(),
 				THRESHOLD as u64,
 			));
 		} else {
-			let tpair = Pair::from_secret(derive_tsk(ix));
+			let tsp = ShareProvider::from_secret(ix as u64, derive_tsk(ix));
 			kbs.push(KeyBox::new(
-				ix as u64,
-				tpair,
+				Some(tsp),
 				vks.clone(),
 				mvk.clone(),
 				THRESHOLD as u64,
@@ -354,20 +352,20 @@ fn test_keybox(states: &States, my_ix: usize) {
 		}
 	}
 
-	let mut nonces = Vec::new();
+	let mut msgs = Vec::new();
 	for pow in 1..5 {
-		let mut nonce = [0; 32];
+		let mut msg = [0; 32];
 		(0..32u64)
 			.enumerate()
-			.for_each(|(i, b)| nonce[i] = b.pow(pow) as u8);
-		nonces.push(nonce.to_vec());
+			.for_each(|(i, b)| msg[i] = b.pow(pow) as u8);
+		msgs.push(msg.to_vec());
 	}
 
-	for nonce in nonces.iter() {
+	for msg in msgs.iter() {
 		let mut shares = Vec::new();
 		for ix in 0..N_MEMBERS {
-			let share = kbs[ix].generate_share(nonce);
-			assert!(kbs[ix].verify_share(&share));
+			let share = kbs[ix].generate_share(msg).unwrap();
+			assert!(kbs[ix].verify_share(&msg, &share));
 			shares.push(share);
 		}
 
@@ -378,7 +376,7 @@ fn test_keybox(states: &States, my_ix: usize) {
 				.filter(|s| *s != shares[ix])
 				.collect();
 			let signature = kbs[ix].combine_shares(&shares);
-			assert!(kbs[ix].verify_randomness(&signature));
+			assert!(kbs[ix].verify_signature(&msg, &signature));
 		}
 	}
 }
@@ -450,9 +448,9 @@ where
 		call: Call<Runtime>,
 		_public: <Signature as Verify>::Signer,
 		_account: AccountId,
-		nonce: u64,
+		msg: u64,
 	) -> Option<(Call<Runtime>, <Extrinsic as ExtrinsicT>::SignaturePayload)> {
-		Some((call, (nonce, ())))
+		Some((call, (msg, ())))
 	}
 }
 

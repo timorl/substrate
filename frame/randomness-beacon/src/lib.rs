@@ -38,12 +38,13 @@ use sp_randomness_beacon::{
 	inherents::{InherentError, INHERENT_IDENTIFIER},
 	Randomness, RandomnessVerifier,
 };
+
 use sp_std::result;
 
 pub trait Trait: frame_system::Trait {
 	type StartHeight: Get<Self::BlockNumber>;
-	type MasterKeyReady: Get<Self::BlockNumber>;
-	type MasterKey: Get<Option<RandomnessVerifier>>;
+	type RandomnessVerifierReady: Get<Self::BlockNumber>;
+	type RandomnessVerifier: Get<Option<RandomnessVerifier>>;
 }
 
 decl_storage! {
@@ -52,8 +53,8 @@ decl_storage! {
 		Seed: Randomness;
 		/// Was Seed set in this block?
 		DidUpdate: bool;
-		/// Stores verifier needed to check randomness in blocks
-		Verifier get(fn verifier): RandomnessVerifier;
+		// Stores verifier needed to check randomness in blocks
+		Verifier get(fn verifier): RandomnessVerifier
 	}
 }
 
@@ -68,8 +69,8 @@ decl_module! {
 		type Error = Error<T>;
 
 		fn on_initialize(now: T::BlockNumber) -> Weight {
-			if now == T::MasterKeyReady::get() {
-				assert!(!Verifier::exists());
+			if now == T::RandomnessVerifierReady::get() {
+				assert!(!<Self as Store>::Verifier::exists());
 				assert!(Self::set_master_key());
 			}
 
@@ -101,7 +102,7 @@ impl<T: Trait> Module<T> {
 	}
 
 	fn set_master_key() -> bool {
-		if let Some(mk) = T::MasterKey::get() {
+		if let Some(mk) = T::RandomnessVerifier::get() {
 			Verifier::put(mk);
 			return true;
 		}
@@ -111,7 +112,7 @@ impl<T: Trait> Module<T> {
 }
 
 /// Extracts the randomness seed for the current block from inherent data.
-fn extract_random_bytes(inherent_data: &InherentData) -> Randomness {
+fn extract_random_bytes<T: Trait>(inherent_data: &InherentData) -> Randomness {
 	let randomness: Result<Option<Randomness>, _> = inherent_data.get_data(&INHERENT_IDENTIFIER);
 	assert!(
 		randomness.is_ok(),
@@ -136,7 +137,9 @@ impl<T: Trait> ProvideInherent for Module<T> {
 	fn create_inherent(data: &InherentData) -> Option<Self::Call> {
 		let now = <frame_system::Module<T>>::block_number();
 		if now >= T::StartHeight::get() {
-			return Some(Self::Call::set_random_bytes(extract_random_bytes(data)));
+			return Some(Self::Call::set_random_bytes(extract_random_bytes::<T>(
+				data,
+			)));
 		}
 		None
 	}
@@ -150,7 +153,7 @@ impl<T: Trait> ProvideInherent for Module<T> {
 			return Ok(());
 		}
 
-		if !Verifier::exists() {
+		if !<Self as Store>::Verifier::exists() {
 			return Err(sp_randomness_beacon::inherents::InherentError::VerifyKeyNotSet);
 		}
 		let randomness = match call {
@@ -235,20 +238,20 @@ mod tests {
 	}
 
 	parameter_types! {
-		pub const MasterKeyReady: <Test as frame_system::Trait>::BlockNumber = 2;
+		pub const RandomnessVerifierReady: <Test as frame_system::Trait>::BlockNumber = 2;
 		pub const StartHeight: <Test as frame_system::Trait>::BlockNumber = 3;
 	}
 
-	pub struct GetMasterKey;
-	impl Get<Option<VerifyKey>> for GetMasterKey {
-		fn get() -> Option<VerifyKey> {
-			Some(VerifyKey::default())
+	pub struct GetRandomnessVerifier;
+	impl Get<Option<RandomnessVerifier>> for GetRandomnessVerifier {
+		fn get() -> Option<RandomnessVerifier> {
+			Some(RandomnessVerifier::default())
 		}
 	}
 	impl Trait for Test {
 		type StartHeight = StartHeight;
-		type MasterKey = GetMasterKey;
-		type MasterKeyReady = MasterKeyReady;
+		type RandomnessVerifier = GetRandomnessVerifier;
+		type RandomnessVerifierReady = RandomnessVerifierReady;
 	}
 
 	type RBeacon = Module<Test>;
@@ -259,7 +262,7 @@ mod tests {
 			assert_eq!(RBeacon::on_initialize(0), 0);
 			assert_ok!(RBeacon::set_random_bytes(
 				Origin::none(),
-				vec![0, 1, 2, 3, 4, 5, 6, 7]
+				Randomness::default()
 			));
 		});
 	}
@@ -271,16 +274,16 @@ mod tests {
 			assert_eq!(RBeacon::on_initialize(0), 0);
 			assert_ok!(RBeacon::set_random_bytes(
 				Origin::none(),
-				vec![0, 1, 2, 3, 4, 5, 6, 7]
+				Randomness::default()
 			));
-			let _ = RBeacon::set_random_bytes(Origin::none(), vec![0, 1, 2, 3, 4, 5, 6, 0]);
+			let _ = RBeacon::set_random_bytes(Origin::none(), Randomness::default());
 		});
 	}
 
 	#[test]
 	fn verifier_correctly_initialized() {
 		new_test_ext().execute_with(|| {
-			assert_eq!(RBeacon::on_initialize(MasterKeyReady::get()), 0);
+			assert_eq!(RBeacon::on_initialize(RandomnessVerifierReady::get()), 0);
 			assert!(<RBeacon as Store>::Verifier::exists());
 		});
 	}

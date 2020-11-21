@@ -20,8 +20,8 @@ use sc_network_gossip::{
 
 use sp_runtime::{generic::BlockId, traits::Block as BlockT};
 
-use sp_dkg::{DKGApi, Pair, Scalar};
-use sp_randomness_beacon::{KeyBox, Nonce, Randomness, Share, ShareProvider};
+use sp_dkg::{DKGApi, KeyBox, Scalar, Share, ShareProvider};
+use sp_randomness_beacon::{Nonce, Randomness};
 
 use futures::{channel::mpsc::Receiver, prelude::*};
 use parking_lot::Mutex;
@@ -44,7 +44,8 @@ pub type ShareBytes = Vec<u8>;
 
 #[derive(Debug, Clone, Encode, Decode)]
 pub struct Message {
-	pub data: ShareBytes,
+	pub data: Vec<u8>,
+	pub share: ShareBytes,
 }
 
 #[derive(Debug, Encode, Decode)]
@@ -176,7 +177,11 @@ where
 		&self,
 		nonce: Nonce,
 		keybox: &KeyBox,
-	) -> (Receiver<TopicNotification>, Option<OutgoingMessage<B>>, Vec<Share>) {
+	) -> (
+		Receiver<TopicNotification>,
+		Option<OutgoingMessage<B>>,
+		Vec<Share>,
+	) {
 		let topic = nonce_to_topic::<B>(nonce.clone());
 
 		let incoming = self
@@ -201,7 +206,6 @@ where
 			})
 			.into_inner();
 
-
 		let mut message = None;
 		let mut shares = Vec::new();
 		let maybe_share = keybox.generate_share(&nonce);
@@ -209,7 +213,10 @@ where
 			let share = maybe_share.unwrap();
 			shares.push(share.clone());
 			message = Some(OutgoingMessage::<B> {
-				msg: Message {data: share.encode()},
+				msg: Message {
+					data: nonce.clone(),
+					share: share.encode(),
+				},
 				nonce: nonce,
 				gossip_engine: self.gossip_engine.clone(),
 			});
@@ -250,7 +257,8 @@ where
 								Bytes(b"dkw::threshold_secret_key".to_vec()),
 							)
 							.map(move |enc_key| {
-								let raw_key = <[u64; 4]>::decode(&mut &enc_key.unwrap()[..]).unwrap();
+								let raw_key =
+									<[u64; 4]>::decode(&mut &enc_key.unwrap()[..]).unwrap();
 								if let Err(e) = tx.lock().send(raw_key) {
 									info!("Error while sending raw_key {:?}", e);
 								}
@@ -259,9 +267,9 @@ where
 					.map_err(|e| info!("didn't get key with err {:?}", e))
 			}));
 			let raw_key = rx.recv().unwrap();
-			share_provider = Some(ShareProvider::new(
+			share_provider = Some(ShareProvider::from_secret(
 				ix.unwrap() as u64,
-				Pair::from_secret(Scalar::from_raw(raw_key))
+				Scalar::from_raw(raw_key),
 			));
 		}
 
@@ -318,7 +326,8 @@ where
 				if let Some(keybox) = maybe_keybox {
 					let (incoming, msg, shares) = self.initialize_nonce(new_nonce.clone(), &keybox);
 					let periodic_sender = futures_timer::Delay::new(SEND_INTERVAL);
-					self.topics.insert(topic, (incoming, msg, periodic_sender, keybox, shares));
+					self.topics
+						.insert(topic, (incoming, msg, periodic_sender, keybox, shares));
 				} else {
 					info!("Obtained a new nonce {:?} but could not retrieve the corresponding keybox.", new_nonce);
 				}
@@ -335,18 +344,20 @@ where
 				}
 			}
 
-
 			let poll = incoming.poll_next_unpin(cx);
 			match poll {
 				Poll::Ready(Some(notification)) => {
 					let GossipMessage { message, .. } =
 						GossipMessage::decode(&mut &notification.message[..]).unwrap();
-					let share: Share = Decode::decode(&mut &*message.data).unwrap();
-					if keybox.verify_share(&share) {
+					let msg = &message.data;
+					let share: Share = Decode::decode(&mut &*message.share).unwrap();
+					if keybox.verify_share(msg, &share) {
 						shares.push(share);
 						// TODO: the following needs an overhaul
 						if shares.len() == threshold as usize {
-							let randomness = keybox.combine_shares(shares);
+							let nonce = message.data.clone();
+							let data = keybox.combine_shares(shares);
+							let randomness = Randomness::new(nonce, data);
 
 							// When randomness succesfully combined, notify block proposer
 							if let Some(ref randomness_tx) = randomness_tx {

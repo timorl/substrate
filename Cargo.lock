@@ -4896,9 +4896,11 @@ dependencies = [
  "frame-support",
  "frame-system",
  "parity-scale-codec",
+ "sp-core",
  "sp-inherents",
  "sp-io",
  "sp-randomness-beacon",
+ "sp-runtime",
  "sp-std",
 ]
 
@@ -8446,7 +8448,6 @@ dependencies = [
  "sha3",
  "sp-api",
  "sp-core",
- "sp-randomness-beacon",
  "sp-runtime",
  "sp-std",
 ]
@@ -8606,6 +8607,7 @@ dependencies = [
  "sp-api",
  "sp-application-crypto",
  "sp-core",
+ "sp-dkg",
  "sp-inherents",
  "sp-runtime",
  "sp-std",
