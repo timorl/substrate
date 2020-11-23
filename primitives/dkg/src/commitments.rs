@@ -8,34 +8,17 @@ use crate::threshold_signatures::VerifyKey;
 pub use bls12_381::Scalar;
 use bls12_381::{G1Affine, G2Affine, G2Projective};
 
+use aes_soft::cipher::generic_array::GenericArray;
+use aes_soft::cipher::{BlockCipher, NewBlockCipher};
+use aes_soft::Aes256;
+use sha3::{Digest, Sha3_256};
+
 use super::RawSecret;
 
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct EncryptionPublicKey {
 	g1point: G1Affine,
 	g2point: G2Affine,
-}
-
-impl EncryptionPublicKey {
-	pub fn from_raw_scalar(raw_scalar: RawSecret) -> Self {
-		let scalar = Scalar::from_raw(raw_scalar);
-
-		Self::from_scalar(scalar)
-	}
-
-	pub fn from_scalar(scalar: Scalar) -> Self {
-		let g1point = G1Affine::from(G1Affine::generator() * scalar);
-		let g2point = G2Affine::from(G2Affine::generator() * scalar);
-
-		EncryptionPublicKey { g1point, g2point }
-	}
-
-	pub fn to_encryption_key(&self, secret: Scalar) -> EncryptionKey {
-		let g1point = G1Affine::from(self.g1point * secret);
-		let g2point = G2Affine::from(self.g2point * secret);
-
-		EncryptionKey { g1point, g2point }
-	}
 }
 
 impl Encode for EncryptionPublicKey {
@@ -71,21 +54,74 @@ impl Decode for EncryptionPublicKey {
 
 impl EncodeLike for EncryptionPublicKey {}
 
-#[derive(Clone)]
-pub struct EncryptionKey {
-	g1point: G1Affine,
-	g2point: G2Affine,
-}
+impl EncryptionPublicKey {
+	pub fn from_raw_scalar(raw_scalar: RawSecret) -> Self {
+		let scalar = Scalar::from_raw(raw_scalar);
 
-impl EncryptionKey {
-	pub fn encrypt(&self, msg: &Vec<u8>) -> Vec<u8> {
-		let _ = self.g1point.is_identity();
-		let _ = self.g2point.is_identity();
-		msg.clone()
+		Self::from_scalar(scalar)
 	}
 
-	pub fn decrypt(&self, msg: &Vec<u8>) -> Option<Vec<u8>> {
-		Some(msg.clone())
+	pub fn from_scalar(scalar: Scalar) -> Self {
+		let g1point = G1Affine::from(G1Affine::generator() * scalar);
+		let g2point = G2Affine::from(G2Affine::generator() * scalar);
+
+		EncryptionPublicKey { g1point, g2point }
+	}
+
+	pub fn to_encryption_key(&self, secret: Scalar) -> EncryptionKey {
+		let g1point = G1Affine::from(self.g1point * secret);
+		let g2point = G2Affine::from(self.g2point * secret);
+
+		let key = EncryptionPublicKey { g1point, g2point }.encode();
+		let mut hasher = Sha3_256::new();
+		hasher.input(key);
+		let key = hasher.result();
+		let key = GenericArray::from_slice(&key[..]);
+
+		EncryptionKey {
+			cipher: Aes256::new(&key),
+		}
+	}
+}
+
+#[derive(Clone)]
+pub struct EncryptionKey {
+	cipher: Aes256,
+}
+
+pub type EncryptedShare = [u8; 32];
+
+impl EncryptionKey {
+	pub fn encrypt(&self, scalar: &Scalar) -> EncryptedShare {
+		let bytes = scalar.to_bytes();
+		let mut block1 = GenericArray::clone_from_slice(&bytes[..16]);
+		let mut block2 = GenericArray::clone_from_slice(&bytes[16..32]);
+		self.cipher.encrypt_block(&mut block1);
+		self.cipher.encrypt_block(&mut block2);
+
+		let mut bytes = [0u8; 32];
+		bytes[..16].copy_from_slice(block1.as_slice());
+		bytes[16..32].copy_from_slice(block2.as_slice());
+
+		bytes
+	}
+
+	pub fn decrypt(&self, bytes: &EncryptedShare) -> Option<Scalar> {
+		let mut block1 = GenericArray::clone_from_slice(&bytes[..16]);
+		let mut block2 = GenericArray::clone_from_slice(&bytes[16..32]);
+		self.cipher.decrypt_block(&mut block1);
+		self.cipher.decrypt_block(&mut block2);
+
+		let mut bytes = [0u8; 32];
+		bytes[..16].copy_from_slice(block1.as_slice());
+		bytes[16..32].copy_from_slice(block2.as_slice());
+		let scalar = Scalar::from_bytes(&bytes);
+
+		if scalar.is_none().unwrap_u8() == 1 {
+			return None;
+		}
+
+		Some(scalar.unwrap())
 	}
 }
 
@@ -160,10 +196,10 @@ mod tests {
 		let secret = Scalar::from_raw([2, 1, 3, 7]);
 		let key = pk.to_encryption_key(secret);
 
-		let msg = b"top secret msg".to_vec();
-		let decrypted = key.decrypt(&key.encrypt(&msg));
+		let secret_share = Scalar::from_raw([2, 1, 3, 7]);
+		let decrypted = key.decrypt(&key.encrypt(&secret_share));
 		assert!(decrypted.is_some());
-		assert_eq!(decrypted.unwrap(), msg);
+		assert_eq!(decrypted.unwrap(), secret_share);
 	}
 
 	#[test]

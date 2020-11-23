@@ -41,7 +41,8 @@ use sp_runtime::{
 use sp_std::{convert::TryInto, vec::Vec};
 
 use sp_dkg::{
-	AuthIndex, Commitment, EncryptionKey, EncryptionPublicKey, RawSecret, Scalar, VerifyKey,
+	AuthIndex, Commitment, EncryptedShare, EncryptionKey, EncryptionPublicKey, RawSecret, Scalar,
+	VerifyKey,
 };
 
 mod tests;
@@ -159,9 +160,6 @@ pub trait Trait: CreateSignedTransaction<Call<Self>> {
 	type RoundEnds: Get<[Self::BlockNumber; 4]>;
 	type MasterKeyReady: Get<Self::BlockNumber>;
 }
-
-// An index of the authority on the list of validators.
-pub type EncryptedShare = Vec<u8>;
 
 // TODO pick hashing functions
 decl_storage! {
@@ -393,8 +391,7 @@ impl<T: Trait> Module<T> {
 			if let Some(ref enc_key) = encryption_keys[ix] {
 				let x = &Scalar::from((ix + 1) as u64);
 				let share = poly_eval(poly, x);
-				let share_data = share.to_bytes().to_vec();
-				enc_shares[ix] = Some(enc_key.encrypt(&share_data));
+				enc_shares[ix] = Some(enc_key.encrypt(&share));
 			}
 		}
 
@@ -469,10 +466,7 @@ impl<T: Trait> Module<T> {
 				// TODO add proper proof and commitment verification
 				disputes.push(creator as AuthIndex);
 			} else {
-				let share_data: [u8; 32] = share.unwrap()[..]
-					.try_into()
-					.expect("slice with incorrect length");
-				shares[creator] = Some(share_data);
+				shares[creator] = Some(share.unwrap().to_bytes());
 			}
 		}
 

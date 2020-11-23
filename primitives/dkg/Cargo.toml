@@ -15,6 +15,7 @@ targets = ["x86_64-unknown-linux-gnu"]
 [dependencies]
 bls12_381 = "0.3.1"
 pairing = "0.18"
+aes-soft = "0.6.4"
 
 sha3 = { version = "0.8", default-features = false}
 rand = { version = "0.7.3", default-features = false, optional = true }

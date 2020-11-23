@@ -143,7 +143,7 @@ fn enc_shares_comms(
 		.enumerate()
 		.map(|(ix, enc_key)| {
 			let x = &Scalar::from(ix as u64 + 1);
-			let share = poly_eval(&poly, x).to_bytes().to_vec();
+			let share = poly_eval(&poly, x);
 			Some(enc_key.encrypt(&share))
 		});
 
@@ -222,21 +222,16 @@ fn test_handle_round2(states: &States) {
 fn derive_tsk(my_ix: usize) -> Scalar {
 	let secret_enc_key = Scalar::from(my_ix as u64);
 	let encryption_keys = encryption_keys(secret_enc_key);
-	let mut shares = Vec::new();
+	let mut tsk = Scalar::zero();
 	for (creator, ek) in encryption_keys.enumerate() {
 		let encrypted_share = &DKG::encrypted_shares_lists()[creator][my_ix]
 			.clone()
 			.unwrap();
-		let share: [u8; 32] = ek.decrypt(&encrypted_share).unwrap()[..]
-			.try_into()
-			.expect("slice with incorrect length");
-		shares.push(share);
+		let share = ek.decrypt(&encrypted_share).unwrap();
+		tsk += share;
 	}
 
-	shares
-		.iter()
-		.map(|b| Scalar::from_bytes(b).unwrap())
-		.fold(Scalar::zero(), |a, b| a + b)
+	tsk
 }
 
 fn test_handle_round3(states: &States, my_ix: usize) {

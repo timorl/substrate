@@ -3,7 +3,7 @@
 mod commitments;
 mod threshold_signatures;
 
-pub use commitments::{Commitment, EncryptionKey, EncryptionPublicKey, Scalar};
+pub use commitments::{Commitment, EncryptedShare, EncryptionKey, EncryptionPublicKey, Scalar};
 pub use threshold_signatures::{KeyBox, Share, ShareProvider, Signature, VerifyKey};
 
 pub type AuthIndex = u64;

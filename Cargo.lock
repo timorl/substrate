@@ -40,7 +40,7 @@ version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f7001367fde4c768a19d1029f0a8be5abd9308e1119846d5bd9ad26297b8faf5"
 dependencies = [
- "aes-soft",
+ "aes-soft 0.4.0",
  "aesni",
  "block-cipher",
 ]
@@ -67,6 +67,16 @@ dependencies = [
  "block-cipher",
  "byteorder 1.3.4",
  "opaque-debug 0.2.3",
+]
+
+[[package]]
+name = "aes-soft"
+version = "0.6.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "be14c7498ea50828a38d0e24a765ed2effe92a705885b57d029cd67d45744072"
+dependencies = [
+ "cipher",
+ "opaque-debug 0.3.0",
 ]
 
 [[package]]
@@ -783,6 +793,15 @@ dependencies = [
  "num-traits",
  "time",
  "wasm-bindgen",
+]
+
+[[package]]
+name = "cipher"
+version = "0.2.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "12f8e7987cbd042a63249497f41aed09f8e65add917ea6566effbc56578d6801"
+dependencies = [
+ "generic-array 0.14.3",
 ]
 
 [[package]]
@@ -8441,6 +8460,7 @@ dependencies = [
 name = "sp-dkg"
 version = "0.1.0"
 dependencies = [
+ "aes-soft 0.6.4",
  "bls12_381",
  "pairing",
  "parity-scale-codec",
