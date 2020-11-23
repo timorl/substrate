@@ -240,6 +240,15 @@ where
 		let (tx, rx) = std::sync::mpsc::channel();
 		let tx = Mutex::new(tx);
 
+		let storage_key = match self
+			.dkg_api
+			.runtime_api()
+			.storage_key_sk(&BlockId::Hash(block_hash))
+		{
+			Ok(Some(st_key)) => st_key,
+			Ok(None) | Err(_) => return None,
+		};
+
 		// TODO: need to adjust this once the fork-aware version of the DKG pallet is ready
 		let mut raw_key = None;
 		if ix.is_some() {
@@ -250,7 +259,7 @@ where
 						client
 							.get_local_storage(
 								StorageKind::PERSISTENT,
-								Bytes(b"dkw::threshold_secret_key".to_vec()),
+								Bytes(storage_key),
 							)
 							.map(move |enc_key| {
 								let raw_key =

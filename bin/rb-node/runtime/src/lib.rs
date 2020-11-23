@@ -515,6 +515,10 @@ impl_runtime_apis! {
 			DKG::public_keybox_parts()
 		}
 
+		fn storage_key_sk() -> Option<Vec<u8>> {
+			DKG::storage_key_sk()
+		}
+
 		fn verification_keys() -> Option<Vec<sp_dkg::VerifyKey>> {
 			DKG::verification_keys()
 		}

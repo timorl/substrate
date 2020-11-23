@@ -40,6 +40,8 @@ use sp_runtime::{
 };
 use sp_std::{convert::TryInto, vec::Vec};
 
+use codec::Encode;
+
 use sp_dkg::{
 	AuthIndex, Commitment, EncryptedShare, EncryptionKey, EncryptionPublicKey, RawSecret, Scalar,
 	VerifyKey,
@@ -317,6 +319,17 @@ impl<T: Trait> Module<T> {
 		Threshold::set(threshold);
 	}
 
+	fn build_storage_key(prefix: &[u8], round_number: usize) -> Vec<u8> {
+		let mut full_key = Vec::from("dkw::");
+		full_key.append(Vec::from(prefix).as_mut());
+		if round_number >= 1 {
+			let block_number = T::RoundEnds::get()[round_number-1];
+			let mut hashb = <frame_system::Module<T>>::block_hash(block_number).encode();
+			full_key.append(&mut hashb);
+		}
+		full_key
+	}
+
 	// generate encryption pair and send public key on chain
 	fn handle_round0() {
 		const ALREADY_SET: () = ();
@@ -327,7 +340,8 @@ impl<T: Trait> Module<T> {
 		};
 
 		// TODO: encrypt the key in the store?
-		let val = StorageValueRef::persistent(b"dkw::enc_key");
+		let st_key  = Self::build_storage_key(b"enc_key", 0);
+		let val = StorageValueRef::persistent(&st_key);
 		let res = val.mutate(|last_set: Option<Option<RawSecret>>| match last_set {
 			Some(Some(_)) => Err(ALREADY_SET),
 			_ => Ok(gen_raw_scalar()),
@@ -364,7 +378,8 @@ impl<T: Trait> Module<T> {
 		// 0. generate secrets
 		let n_members = Self::authorities().len();
 		let threshold = Threshold::get();
-		let val = StorageValueRef::persistent(b"dkw::secret_poly");
+		let st_key = Self::build_storage_key(b"secret_poly", 1);
+		let val = StorageValueRef::persistent(&st_key);
 		let res = val.mutate(|last_set: Option<Option<Vec<RawSecret>>>| match last_set {
 			Some(Some(_)) => Err(ALREADY_SET),
 			_ => Ok(gen_poly_coeffs(threshold - 1)),
@@ -430,8 +445,8 @@ impl<T: Trait> Module<T> {
 			Some((ix, auth)) => (ix, auth),
 			None => return,
 		};
-
-		let val = StorageValueRef::persistent(b"dkw::secret_shares");
+		let st_key = Self::build_storage_key(b"secret_shares", 2);
+		let val = StorageValueRef::persistent(&st_key);
 		let res = val.mutate(
 			|last_set: Option<Option<Vec<Option<[u8; 32]>>>>| match last_set {
 				Some(Some(_)) => Err(ALREADY_SET),
@@ -522,7 +537,8 @@ impl<T: Trait> Module<T> {
 		};
 
 		// 1. derive local threshold secret
-		let val = StorageValueRef::persistent(b"dkw::threshold_secret_key");
+		let st_key_secret_key = Self::build_storage_key(b"threshold_secret_key", 3);
+		let val = StorageValueRef::persistent(&st_key_secret_key);
 		let res = val.mutate(|last_set: Option<Option<[u8; 32]>>| match last_set {
 			Some(Some(_)) => Err(ALREADY_SET),
 			_ => Ok([0; 32]),
@@ -532,7 +548,8 @@ impl<T: Trait> Module<T> {
 			return;
 		}
 
-		let secret = StorageValueRef::persistent(b"dkw::secret_shares")
+		let st_key_secret_shares = Self::build_storage_key(b"secret_shares", 2);
+		let secret = StorageValueRef::persistent(&st_key_secret_shares)
 			.get::<Vec<Option<[u8; 32]>>>()
 			.unwrap()
 			.unwrap()
@@ -618,7 +635,8 @@ impl<T: Trait> Module<T> {
 	}
 
 	fn encryption_keys() -> Vec<Option<EncryptionKey>> {
-		let raw_secret = StorageValueRef::persistent(b"dkw::enc_key")
+		let st_key = Self::build_storage_key(b"enc_key", 0);
+		let raw_secret = StorageValueRef::persistent(&st_key)
 			.get()
 			.unwrap()
 			.unwrap();
@@ -668,6 +686,15 @@ impl<T: Trait> Module<T> {
 		Some((ix, verification_keys, master_key, threshold))
 	}
 
+	pub fn storage_key_sk() -> Option<Vec<u8>> {
+		let now = <frame_system::Module<T>>::block_number();
+		let deadline_round_2 = T::RoundEnds::get()[2];
+		if now <= deadline_round_2 {
+			return None;
+		}
+		Some(Self::build_storage_key(b"threshold_secret_key", 3))
+	}
+
 	pub fn verification_keys() -> Option<Vec<VerifyKey>> {
 		if !VerificationKeys::exists() {
 			return None;
@@ -684,6 +711,8 @@ impl<T: Trait> Module<T> {
 impl<T: Trait> sp_runtime::BoundToRuntimeAppPublic for Module<T> {
 	type Public = T::AuthorityId;
 }
+
+
 
 fn u8_array_to_raw_scalar(bytes: [u8; 32]) -> RawSecret {
 	let mut out = [0u64; 4];
