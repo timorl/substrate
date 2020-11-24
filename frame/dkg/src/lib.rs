@@ -219,26 +219,30 @@ decl_module! {
 
 		// TODO: we need to be careful with weights -- for now they are 0, but need to think about them later
 		#[weight = 0]
-		pub fn post_encryption_key(origin, pk: EncryptionPublicKey)  {
+		pub fn post_encryption_key(origin, pk: EncryptionPublicKey) {
 			let now = <frame_system::Module<T>>::block_number();
-			let who = ensure_signed(origin)?;
+			if !(now <= T::RoundEnds::get()[0]) {
+				return Ok(());
+			}
 
+			let who = ensure_signed(origin)?;
 			if let Some(ix) = Self::authority_index(who){
-				if now <= T::RoundEnds::get()[0] {
-					EncryptionPKs::mutate(|ref mut values| values[ix as usize] = Some(pk));
-				}
+				EncryptionPKs::mutate(|ref mut values| values[ix as usize] = Some(pk));
 			}
 		}
 
 		#[weight = 0]
 		pub fn post_secret_shares(origin, shares: Vec<Option<EncryptedShare>>, comm_poly: Vec<Commitment>, hash_round0: T::Hash) {
 			let now = <frame_system::Module<T>>::block_number();
-			let who = ensure_signed(origin)?;
+			if !(now < T::RoundEnds::get()[0] && now <= T::RoundEnds::get()[1]) {
+				return Ok(());
+			}
 
+			let who = ensure_signed(origin)?;
 			if let Some(ix) = Self::authority_index(who){
 				let round0_number: T::BlockNumber = T::RoundEnds::get()[0];
 				let correct_hash_round0 = <frame_system::Module<T>>::block_hash(round0_number);
-				if hash_round0 == correct_hash_round0 && now <= T::RoundEnds::get()[1] {
+				if hash_round0 == correct_hash_round0 {
 					EncryptedSharesLists::mutate(|ref mut values| values[ix as usize] = shares);
 					CommittedPolynomials::mutate(|ref mut values| values[ix as usize] = comm_poly);
 					IsCorrectDealer::mutate(|ref mut values| values[ix as usize] = true);
@@ -249,12 +253,15 @@ decl_module! {
 		#[weight = 0]
 		pub fn post_disputes(origin, disputes: Vec<AuthIndex>, hash_round1: T::Hash) {
 			let now = <frame_system::Module<T>>::block_number();
-			let who = ensure_signed(origin)?;
+			if !(now < T::RoundEnds::get()[1] && now <= T::RoundEnds::get()[2]) {
+				return Ok(());
+			}
 
+			let who = ensure_signed(origin)?;
 			if let Some(ix) = Self::authority_index(who){
 				let round1_number: T::BlockNumber = T::RoundEnds::get()[1];
 				let correct_hash_round1 = <frame_system::Module<T>>::block_hash(round1_number);
-				if hash_round1 == correct_hash_round1 && now <= T::RoundEnds::get()[2] {
+				if hash_round1 == correct_hash_round1 {
 						DisputesAgainstDealer::mutate(|ref mut values| values[ix as usize] = disputes.clone());
 						// TODO verify disputes
 						IsCorrectDealer::mutate(|ref mut values|
@@ -296,6 +303,8 @@ decl_module! {
 		}
 
 		fn offchain_worker(block_number: T::BlockNumber) {
+			// At the end of Round 2, the public Keybox is ready
+			// Round 3 is only for the offchain worker to put the secret key in its storage.
 			if block_number < T::RoundEnds::get()[0]  {
 					Self::handle_round0();
 			} else if block_number < T::RoundEnds::get()[1] {
