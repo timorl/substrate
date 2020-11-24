@@ -2,7 +2,7 @@
 
 use crate::*;
 use codec::Decode;
-use frame_support::{impl_outer_origin, parameter_types, weights::Weight};
+use frame_support::{impl_outer_origin, parameter_types, traits::OnFinalize, weights::Weight};
 use parking_lot::RwLock;
 use sp_core::{
 	offchain::{
@@ -91,10 +91,11 @@ fn init(my_id: sp_dkg::crypto::AuthorityId) -> usize {
 }
 
 fn get_secret_enc_key(offchain_state: Arc<RwLock<OffchainState>>) -> RawSecret {
+	let st_key = DKG::build_storage_key(b"enc_key", 0);
 	let raw_secret_encoded = offchain_state
 		.read()
 		.persistent_storage
-		.get(b"", b"dkw::enc_key")
+		.get(b"", &st_key)
 		.unwrap();
 	<RawSecret>::decode(&mut &raw_secret_encoded[..]).unwrap()
 }
@@ -168,11 +169,12 @@ fn test_handle_round1(states: &States, my_ix: usize) {
 	DKG::handle_round1();
 
 	// check if correct values was submitted on chain
+	let st_key = DKG::build_storage_key(b"secret_poly", 1);
 	let raw_poly_coeffs_encoded = states
 		.offchain
 		.read()
 		.persistent_storage
-		.get(b"", b"dkw::secret_poly")
+		.get(b"", &st_key)
 		.unwrap();
 	let raw_poly_coeffs = <Vec<RawSecret>>::decode(&mut &raw_poly_coeffs_encoded[..]).unwrap();
 	let poly = raw_poly_coeffs
@@ -237,21 +239,24 @@ fn derive_tsk(my_ix: usize) -> Scalar {
 fn test_handle_round3(states: &States, my_ix: usize) {
 	// do the round
 	DKG::handle_round3();
+	<DKG as OnFinalize<u64>>::on_finalize(RoundEnds::get()[2]);
 
 	// check if correct values was submitted on chain
+	let st_key = DKG::build_storage_key(b"threshold_secret_key", 3);
 	let tsk_encoded = states
 		.offchain
 		.read()
 		.persistent_storage
-		.get(b"", b"dkw::threshold_secret_key")
+		.get(b"", &st_key)
 		.unwrap();
 	let tsk = Scalar::from_bytes(&<[u8; 32]>::decode(&mut &tsk_encoded[..]).unwrap()).unwrap();
 
+	let st_key = DKG::build_storage_key(b"secret_shares", 2);
 	let tsk_shares_encoded = states
 		.offchain
 		.read()
 		.persistent_storage
-		.get(b"", b"dkw::secret_shares")
+		.get(b"", &st_key)
 		.unwrap();
 	let tsk_shares = <Vec<Option<[u8; 32]>>>::decode(&mut &tsk_shares_encoded[..])
 		.unwrap()
@@ -265,12 +270,14 @@ fn test_handle_round3(states: &States, my_ix: usize) {
 		.collect();
 
 	let mvk = Commitment::derive_key(comms);
+	assert_eq!(mvk, <DKG as Store>::MasterVerificationKey::get());
 
+	let st_key = DKG::build_storage_key(b"secret_poly", 1);
 	let raw_poly_coeffs_encoded = states
 		.offchain
 		.read()
 		.persistent_storage
-		.get(b"", b"dkw::secret_poly")
+		.get(b"", &st_key)
 		.unwrap();
 	let raw_poly_coeffs = <Vec<RawSecret>>::decode(&mut &raw_poly_coeffs_encoded[..]).unwrap();
 	let local_secret = Scalar::from_raw(raw_poly_coeffs[0]);
@@ -292,6 +299,7 @@ fn test_handle_round3(states: &States, my_ix: usize) {
 			.collect();
 		vks.push(Commitment::derive_key(part_keys))
 	}
+	assert_eq!(vks, <DKG as Store>::VerificationKeys::get());
 
 	for ix in 0..N_MEMBERS {
 		if ix == my_ix {
@@ -300,32 +308,20 @@ fn test_handle_round3(states: &States, my_ix: usize) {
 			assert_eq!(vks[ix], VerifyKey::from_secret(&derive_tsk(ix)));
 		}
 	}
-
-	let tx = states.pool.write().transactions.pop().unwrap();
-	assert!(states.pool.read().transactions.is_empty());
-	let tx = Extrinsic::decode(&mut &*tx).unwrap();
-	assert_eq!(tx.signature.unwrap().0, 3);
-
-	assert_eq!(
-		tx.call,
-		Call::post_verification_keys(mvk.clone(), vks.clone(), Default::default())
-	);
-
-	<DKG as Store>::MasterVerificationKey::put(mvk);
-	<DKG as Store>::VerificationKeys::put(vks);
 }
 
 fn test_keybox(states: &States, my_ix: usize) {
 	let mut kbs = Vec::new();
 	let vks = <DKG as Store>::VerificationKeys::get();
 	let mvk = <DKG as Store>::MasterVerificationKey::get();
+	let st_key = DKG::build_storage_key(b"threshold_secret_key", 3);
 	for ix in 0..N_MEMBERS {
 		if ix == my_ix {
 			let tsk_encoded = states
 				.offchain
 				.read()
 				.persistent_storage
-				.get(b"", b"dkw::threshold_secret_key")
+				.get(b"", &st_key)
 				.unwrap();
 			let tsk =
 				Scalar::from_bytes(&<[u8; 32]>::decode(&mut &tsk_encoded[..]).unwrap()).unwrap();

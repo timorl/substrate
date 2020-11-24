@@ -264,12 +264,34 @@ decl_module! {
 			}
 		}
 
-		// TODO move to on_finalize
-		#[weight = 0]
-		pub fn post_verification_keys(origin, mvk: VerifyKey, vks: Vec<VerifyKey>, hash_round2: T::Hash) {
-			ensure_signed(origin)?;
+		fn on_finalize(bn: T::BlockNumber) {
+			if bn != T::RoundEnds::get()[2] {
+				return
+			}
 
+			let qualified = Self::is_correct_dealer();
+			let comms = Self::committed_polynomials()
+				.into_iter()
+				.enumerate()
+				.filter(|(ix, comms)| qualified[*ix] && !comms.is_empty())
+				.map(|(_, comms)| comms[0].clone())
+				.collect();
+
+			let mvk = Commitment::derive_key(comms);
 			MasterVerificationKey::put(mvk);
+
+			let n_members = Self::authorities().len();
+			let mut vks = Vec::new();
+			for ix in 0..n_members {
+				let x = &Scalar::from((ix + 1) as u64);
+				let part_keys = (0..n_members)
+					.filter(|dealer| {
+						qualified[*dealer] && !Self::committed_polynomials()[*dealer].is_empty()
+					})
+					.map(|dealer| Commitment::poly_eval(&Self::committed_polynomials()[dealer], x))
+					.collect();
+				vks.push(Commitment::derive_key(part_keys))
+			}
 			VerificationKeys::put(vks);
 		}
 
@@ -323,7 +345,7 @@ impl<T: Trait> Module<T> {
 		let mut full_key = Vec::from("dkw::");
 		full_key.append(Vec::from(prefix).as_mut());
 		if round_number >= 1 {
-			let block_number = T::RoundEnds::get()[round_number-1];
+			let block_number = T::RoundEnds::get()[round_number - 1];
 			let mut hashb = <frame_system::Module<T>>::block_hash(block_number).encode();
 			full_key.append(&mut hashb);
 		}
@@ -340,7 +362,7 @@ impl<T: Trait> Module<T> {
 		};
 
 		// TODO: encrypt the key in the store?
-		let st_key  = Self::build_storage_key(b"enc_key", 0);
+		let st_key = Self::build_storage_key(b"enc_key", 0);
 		let val = StorageValueRef::persistent(&st_key);
 		let res = val.mutate(|last_set: Option<Option<RawSecret>>| match last_set {
 			Some(Some(_)) => Err(ALREADY_SET),
@@ -514,12 +536,10 @@ impl<T: Trait> Module<T> {
 		}
 	}
 
-	// TODO move all computations of public stuff to on_finalize
-	// derive local key pair and master verification key, and send master key to the chain
+	// derive local key pair
 	fn handle_round3() {
 		const ALREADY_SET: () = ();
 
-		// 0. Check if there are enough qualified nodes
 		let threshold = Threshold::get();
 		let qualified = Self::is_correct_dealer();
 		let n_qualified = qualified.iter().map(|&v| v as u64).sum::<u64>();
@@ -531,12 +551,6 @@ impl<T: Trait> Module<T> {
 			n_qualified,
 		);
 
-		let (my_ix, auth) = match Self::local_authority_key() {
-			Some((ix, auth)) => (ix, auth),
-			None => return,
-		};
-
-		// 1. derive local threshold secret
 		let st_key_secret_key = Self::build_storage_key(b"threshold_secret_key", 3);
 		let val = StorageValueRef::persistent(&st_key_secret_key);
 		let res = val.mutate(|last_set: Option<Option<[u8; 32]>>| match last_set {
@@ -565,50 +579,6 @@ impl<T: Trait> Module<T> {
 
 		if res.is_err() || res.unwrap().is_err() {
 			debug::info!("DKG handle_round3 error in setting secret threshold key");
-			return;
-		}
-
-		// 2. derive and post master key and verification keys
-		let comms = Self::committed_polynomials()
-			.into_iter()
-			.enumerate()
-			.filter(|(ix, comms)| qualified[*ix] && !comms.is_empty())
-			.map(|(_, comms)| comms[0].clone())
-			.collect();
-
-		let mvk = Commitment::derive_key(comms);
-
-		let n_members = Self::authorities().len();
-		let mut vks = Vec::new();
-		for ix in 0..n_members {
-			let x = &Scalar::from((ix + 1) as u64);
-			let part_keys = (0..n_members)
-				.filter(|dealer| {
-					qualified[*dealer] && !Self::committed_polynomials()[*dealer].is_empty()
-				})
-				.map(|dealer| Commitment::poly_eval(&Self::committed_polynomials()[dealer], x))
-				.collect();
-			vks.push(Commitment::derive_key(part_keys))
-		}
-
-		let round2_number: T::BlockNumber = T::RoundEnds::get()[2];
-		let hash_round2 = <frame_system::Module<T>>::block_hash(round2_number);
-
-		let signer =
-			Signer::<T, T::AuthorityId>::all_accounts().with_filter([auth.into()].to_vec());
-		if !signer.can_sign() {
-			debug::info!("DKG ERROR NO KEYS FOR SIGNER {:?}!!!", my_ix);
-			return;
-		}
-
-		let tx_res = signer.send_signed_transaction(|_| {
-			Call::post_verification_keys(mvk.clone(), vks.clone(), hash_round2)
-		});
-
-		for (_, res) in &tx_res {
-			if let Err(e) = res {
-				debug::error!("DKG Failed to submit tx with master key: {:?}", e)
-			}
 		}
 	}
 
@@ -636,10 +606,7 @@ impl<T: Trait> Module<T> {
 
 	fn encryption_keys() -> Vec<Option<EncryptionKey>> {
 		let st_key = Self::build_storage_key(b"enc_key", 0);
-		let raw_secret = StorageValueRef::persistent(&st_key)
-			.get()
-			.unwrap()
-			.unwrap();
+		let raw_secret = StorageValueRef::persistent(&st_key).get().unwrap().unwrap();
 		let secret = Scalar::from_raw(raw_secret);
 		let mut keys = Vec::new();
 		Self::encryption_pks()
@@ -711,8 +678,6 @@ impl<T: Trait> Module<T> {
 impl<T: Trait> sp_runtime::BoundToRuntimeAppPublic for Module<T> {
 	type Public = T::AuthorityId;
 }
-
-
 
 fn u8_array_to_raw_scalar(bytes: [u8; 32]) -> RawSecret {
 	let mut out = [0u64; 4];
