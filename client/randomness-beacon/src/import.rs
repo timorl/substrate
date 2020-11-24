@@ -15,7 +15,7 @@ use sp_consensus::{
 	BlockCheckParams, BlockImport, BlockImportParams, Error as ConsensusError, ImportResult,
 };
 
-use sp_runtime::traits::Block as BlockT;
+use sp_runtime::traits::{Block as BlockT, Header};
 use std::{collections::HashMap, marker, sync::Arc};
 
 #[derive(derive_more::Display, Debug)]
@@ -33,14 +33,12 @@ impl std::convert::From<Error> for ConsensusError {
 	}
 }
 
-use super::Nonce;
-use super::ShareBytes;
+use super::NonceInfo;
 
 pub struct RandomnessBeaconBlockImport<B: BlockT, I, C> {
 	inner: I,
 	client: Arc<C>,
-	random_bytes_buf: HashMap<Nonce<B>, Option<ShareBytes>>,
-	randomness_nonce_tx: Sender<Nonce<B>>,
+	randomness_nonce_tx: Sender<NonceInfo<B>>,
 	_marker: marker::PhantomData<B>,
 }
 
@@ -49,7 +47,6 @@ impl<B: BlockT, I: Clone, C> Clone for RandomnessBeaconBlockImport<B, I, C> {
 		Self {
 			inner: self.inner.clone(),
 			client: self.client.clone(),
-			random_bytes_buf: self.random_bytes_buf.clone(),
 			randomness_nonce_tx: self.randomness_nonce_tx.clone(),
 			_marker: marker::PhantomData,
 		}
@@ -64,11 +61,10 @@ where
 	C: ProvideRuntimeApi<B> + Send + Sync + HeaderBackend<B> + AuxStore + ProvideCache<B> + BlockOf,
 	C::Api: BlockBuilderApi<B, Error = sp_blockchain::Error>,
 {
-	pub fn new(inner: I, client: Arc<C>, randomness_nonce_tx: Sender<Nonce<B>>) -> Self {
+	pub fn new(inner: I, client: Arc<C>, randomness_nonce_tx: Sender<NonceInfo<B>>) -> Self {
 		Self {
 			inner,
 			client,
-			random_bytes_buf: HashMap::new(),
 			randomness_nonce_tx,
 			_marker: marker::PhantomData,
 		}
@@ -98,7 +94,7 @@ where
 		new_cache: HashMap<CacheKeyId, Vec<u8>>,
 	) -> Result<ImportResult, Self::Error> {
 		let nonce = block.post_hash();
-
+		let num = block.header.number().clone();
 		let res = self
 			.inner
 			.import_block(block, new_cache)
@@ -109,14 +105,11 @@ where
 			return res;
 		}
 
-		// TODO what sould be first sending nonce or importing?
-		// TODO: add some check if we already processed the hash
-		if let None = self.random_bytes_buf.get(&nonce) {
-			if let Err(err) = self.randomness_nonce_tx.try_send(nonce.clone()) {
-				info!(target: "import", "error when try_send topic through notifier {}", err);
-				return Err(Error::TransmitErr.into());
-			}
-			self.random_bytes_buf.insert(nonce, None);
+
+		info!("We've got a block number {:?}",num);
+		if let Err(err) = self.randomness_nonce_tx.try_send(NonceInfo::new(nonce, num)) {
+			info!(target: "import", "error when try_send topic through notifier {}", err);
+			return Err(Error::TransmitErr.into());
 		}
 
 		res

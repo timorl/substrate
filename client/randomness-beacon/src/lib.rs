@@ -18,7 +18,7 @@ use sc_network_gossip::{
 	GossipEngine, Network, TopicNotification, ValidationResult, Validator, ValidatorContext,
 };
 
-use sp_runtime::{generic::BlockId, traits::Block as BlockT};
+use sp_runtime::{generic::BlockId, traits::Block as BlockT, traits::NumberFor};
 
 use sp_dkg::DKGApi;
 use sp_randomness_beacon::{RBBox, Randomness, RandomnessShare};
@@ -33,7 +33,18 @@ use std::{
 	time,
 };
 
+use std::cmp::Ordering;
+use std::collections::BinaryHeap;
+
+//pub type NonceInfo<B> = (<B as BlockT>::Hash, NumberFor<B>);
 pub type Nonce<B> = <B as BlockT>::Hash;
+
+#[derive(Copy, Clone, Eq, PartialEq)]
+pub struct NonceInfo<B> where B: BlockT {
+	nonce: Nonce<B>,
+    height: NumberFor<B>,
+}
+
 
 const RANDOMNESS_BEACON_ID: [u8; 4] = *b"rndb";
 const RB_PROTOCOL_NAME: &'static str = "/randomness_beacon";
@@ -55,6 +66,35 @@ pub struct GossipMessage<B: BlockT> {
 	message: Message,
 }
 
+impl<B: BlockT> NonceInfo<B> {
+	fn new(nonce: <B as BlockT>::Hash, height: NumberFor<B>) -> Self {
+		NonceInfo { nonce, height }
+	}
+
+	fn nonce(&self) -> &Nonce<B> {
+		&self.nonce
+	}
+
+	fn height(&self) -> &NumberFor<B> {
+		&self.height
+	}
+}
+
+impl<B: BlockT> Ord for NonceInfo<B> {
+    fn cmp(&self, other: &Self) -> Ordering {
+    	// We want the lowest height to come first
+        other.height.cmp(&self.height)
+            .then_with(|| self.nonce.cmp(&other.nonce))
+    }
+}
+
+// `PartialOrd` needs to be implemented as well.
+impl<B: BlockT> PartialOrd for NonceInfo<B> {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
 pub struct GossipValidator {}
 
 impl GossipValidator {
@@ -71,8 +111,6 @@ pub enum Error {
 
 /// Validator of the messages received via gossip.
 /// It only needs to check that the received data corresponds to a share
-/// for BLS threshold signatures. The appropriate logic for that will be
-/// added in Milestone 2 (when BLS crypto will be incorporated in the code).
 impl<B: BlockT> Validator<B> for GossipValidator {
 	fn validate(
 		&self,
@@ -129,8 +167,9 @@ pub struct RandomnessGossip<B: BlockT, C> {
 			Vec<RandomnessShare<Nonce<B>>>,
 		),
 	>,
+	height_queue: BinaryHeap<NonceInfo<B>>,
 	gossip_engine: Arc<Mutex<GossipEngine<B>>>,
-	randomness_nonce_rx: Receiver<Nonce<B>>,
+	randomness_nonce_rx: Receiver<NonceInfo<B>>,
 	randomness_tx: Option<Sender<Randomness<Nonce<B>>>>,
 	dkg_api: Arc<C>,
 	http_rpc_port: u16,
@@ -146,7 +185,7 @@ where
 {
 	pub fn new<N: Network<B> + Send + Clone + 'static>(
 		threshold: u64,
-		randomness_nonce_rx: Receiver<Nonce<B>>,
+		randomness_nonce_rx: Receiver<NonceInfo<B>>,
 		network: N,
 		randomness_tx: Option<Sender<Randomness<Nonce<B>>>>,
 		dkg_api: Arc<C>,
@@ -162,6 +201,7 @@ where
 		RandomnessGossip {
 			threshold,
 			topics: HashMap::new(),
+			height_queue: BinaryHeap::new(),
 			gossip_engine,
 			randomness_nonce_rx,
 			randomness_tx,
@@ -170,21 +210,37 @@ where
 		}
 	}
 
+	// prunes all topics that are >=30 blocks lower than at_height
+	fn prune_old_topics(& mut self, at_height: NumberFor<B>) {
+		while let Some(nonce_info) = self.height_queue.peek() {
+			// TODO: make this constant 30 into a parameter
+			if *nonce_info.height() + 30.into() <= at_height {
+				// TODO: make sure it is safe to prune this way...
+				// The channels are closed, is this fine?
+				self.topics.remove(&nonce_info.nonce());
+				self.height_queue.pop();
+			}
+		}
+	}
+
 	fn initialize_nonce(
-		&self,
-		nonce: Nonce<B>,
+		& mut self,
+		nonce_info: NonceInfo<B>,
 		rbbox: &RBBox<Nonce<B>>,
 	) -> (
 		Receiver<TopicNotification>,
 		Option<OutgoingMessage<B>>,
 		Vec<RandomnessShare<Nonce<B>>>,
 	) {
-		let topic = nonce.clone();
+		let nonce = nonce_info.nonce();
+		let height = nonce_info.height();
+		self.prune_old_topics(*height);
+		let topic = nonce;
 
 		let incoming = self
 			.gossip_engine
 			.lock()
-			.messages_for(topic)
+			.messages_for(*topic)
 			.filter_map(move |notification| {
 				let decoded = GossipMessage::<B>::decode(&mut &notification.message[..]);
 				match decoded {
@@ -213,21 +269,36 @@ where
 				msg: Message {
 					share: share.encode(),
 				},
-				nonce: nonce,
+				nonce: nonce.clone(),
 				gossip_engine: self.gossip_engine.clone(),
 			});
 		}
 		(incoming, message, shares)
 	}
 
-	fn get_rbbox(&mut self, nonce: &Nonce<B>) -> Option<RBBox<Nonce<B>>> {
-		let block_hash = nonce.clone();
-
+	fn get_rbbox(&mut self, nonce_info: &NonceInfo<B>) -> Option<RBBox<Nonce<B>>> {
 		use hyper::rt;
 		use hyper::rt::Future;
 		use jsonrpc_core_client::transports::http;
 		use sc_rpc::offchain::OffchainClient;
 		use sp_core::{offchain::StorageKind, Bytes};
+
+		let block_hash = nonce_info.nonce().clone();
+		let block_height = nonce_info.height();
+
+
+		let height_master_ready = match self
+			.dkg_api
+			.runtime_api()
+			.master_key_ready(&BlockId::Hash(block_hash)) {
+				Ok(height) => height,
+				_ => return None
+			};
+
+		if height_master_ready > *block_height {
+			// the keys are not ready yet
+			return None;
+		}
 
 		let (ix, verification_keys, master_key, t) = match self
 			.dkg_api
@@ -302,25 +373,21 @@ where
 			}
 			Poll::Pending => {}
 		};
-		let new_nonce = match self.randomness_nonce_rx.poll_next_unpin(cx) {
+		let new_nonce_info = match self.randomness_nonce_rx.poll_next_unpin(cx) {
 			Poll::Pending => None,
 			Poll::Ready(None) => return Poll::Ready(()),
-			Poll::Ready(new_nonce) => new_nonce,
+			Poll::Ready(new_nonce_info) => new_nonce_info,
 		};
 
-		// TODO: add a mechanism for clearing old topics
-		if new_nonce.is_none() && self.topics.is_empty() {
-			return Poll::Pending;
-		}
-
-		if new_nonce.is_some() {
-			let new_nonce = new_nonce.unwrap();
+		if new_nonce_info.is_some() {
+			let new_nonce_info = new_nonce_info.unwrap();
+			let new_nonce = new_nonce_info.nonce();
 			let topic = new_nonce.clone();
 			if !self.topics.contains_key(&topic) {
 				// received new nonce, need to fetch the corresponding rbbox
-				let maybe_rbbox = self.get_rbbox(&new_nonce);
+				let maybe_rbbox = self.get_rbbox(&new_nonce_info);
 				if let Some(rbbox) = maybe_rbbox {
-					let (incoming, msg, shares) = self.initialize_nonce(new_nonce.clone(), &rbbox);
+					let (incoming, msg, shares) = self.initialize_nonce(new_nonce_info.clone(), &rbbox);
 					let periodic_sender = futures_timer::Delay::new(SEND_INTERVAL);
 					self.topics
 						.insert(topic, (incoming, msg, periodic_sender, rbbox, shares));

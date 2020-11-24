@@ -16,7 +16,7 @@ use sp_runtime::generic::BlockId;
 use std::sync::Arc;
 use std::time::Duration;
 
-use sc_randomness_beacon::{import::RandomnessBeaconBlockImport, Nonce, RandomnessGossip};
+use sc_randomness_beacon::{import::RandomnessBeaconBlockImport, NonceInfo, RandomnessGossip};
 
 // Our native executor instance.
 native_executor_instance!(
@@ -61,7 +61,7 @@ pub fn new_partial(
 		sp_consensus::DefaultImportQueue<Block, FullClient>,
 		sc_transaction_pool::FullPool<Block, FullClient>,
 		(
-			Receiver<Nonce<Block>>,
+			Receiver<NonceInfo<Block>>,
 			RandomnessBeaconBlockImport<
 				Block,
 				GrandpaBlockImport<FullBackend, Block, FullClient, FullSelectChain>,
