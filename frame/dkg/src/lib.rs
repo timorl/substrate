@@ -234,7 +234,7 @@ decl_module! {
 		#[weight = 0]
 		pub fn post_secret_shares(origin, shares: Vec<Option<EncryptedShare>>, comm_poly: Vec<Commitment>, hash_round0: T::Hash) {
 			let now = <frame_system::Module<T>>::block_number();
-			if !(now < T::RoundEnds::get()[0] && now <= T::RoundEnds::get()[1]) {
+			if !(now > T::RoundEnds::get()[0] && now <= T::RoundEnds::get()[1]) {
 				return Ok(());
 			}
 
@@ -253,7 +253,7 @@ decl_module! {
 		#[weight = 0]
 		pub fn post_disputes(origin, disputes: Vec<AuthIndex>, hash_round1: T::Hash) {
 			let now = <frame_system::Module<T>>::block_number();
-			if !(now < T::RoundEnds::get()[1] && now <= T::RoundEnds::get()[2]) {
+			if !(now > T::RoundEnds::get()[1] && now <= T::RoundEnds::get()[2]) {
 				return Ok(());
 			}
 

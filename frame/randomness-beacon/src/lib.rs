@@ -79,12 +79,14 @@ decl_module! {
 
 		// TODO add verify
 		#[weight = 0]
-		fn set_random_bytes(origin, random_bytes: Randomness<T::Hash>)  {
+		fn set_random_bytes(origin, randomness: Randomness<T::Hash>)  {
 			ensure_none(origin)?;
+
+			assert!(Self::verifier().verify(&randomness), "Failed to verify randomness");
 
 			assert!(!<Self as Store>::DidUpdate::exists(), "Randomness must be set only once in the block");
 
-			<Self as Store>::Seed::put(random_bytes);
+			<Self as Store>::Seed::put(randomness);
 			<Self as Store>::DidUpdate::put(true);
 		}
 
