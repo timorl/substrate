@@ -16,7 +16,7 @@
 // limitations under the License.
 
 //! DKG (Distributed Key Generation) Pallet for generating threshold BLS keys without
-//! a trusted dealer. This uses a variant of the classical Pedersen DKG protocol in which
+//! a trusted creator. This uses a variant of the classical Pedersen DKG protocol in which
 //! the blockchain is used as a realiable broadcast channel. This way one does not need to
 //! assume synchronicity of the underlying network, only that the committee members have
 //! read access to the blockchain and are able to send transactions, with not too high
@@ -49,24 +49,13 @@ use sp_dkg::{
 
 mod tests;
 
-// TODO make the implementation of Offchain worker storage fork-aware. This is currently not
-// supported in substrate as only the PERSISTENT version of storage is available and LOCAL
-// is not. Need to implement custom support for forks in the PERSISTENT version.
-
 // TODO handle the situation when the node is not an authority
-
-// TODO do we add protection against biasing?
 
 // n is the number of nodes in the committee
 // node indices are 0-based: 0, 1, 2, ..., n-1
 // t is the threshold: it is necessary and sufficient to have t shares to combine
 // the degree of the polynomial is thus t-1
 
-// TODO the following and the definition of AuthorityId probably needs a refactor. The problem is
-// that the trait CreateSignedTransaction needed by Signer imposes that AuthorityId must extend
-// AppCrypto and on the other hand if we want to use AuthorityId as public keys of validators, i.e.
-// sign messages, determine index in the validator list and simply be their ids, then we need to
-// extend AuthorityId with RuntimeAppPublic as keys in keystore are stored as RuntimeAppPublic.
 pub mod crypto {
 	use codec::{Decode, Encode};
 	use sp_runtime::{MultiSignature, MultiSigner};
@@ -158,7 +147,6 @@ pub trait Trait: CreateSignedTransaction<Call<Self>> {
 	/// The overarching dispatch call type.
 	type Call: From<Call<Self>>;
 
-	// TODO maybe we could control the round boundaries with events?
 	type RoundEnds: Get<[Self::BlockNumber; 4]>;
 	type MasterKeyReady: Get<Self::BlockNumber>;
 }
@@ -185,12 +173,12 @@ decl_storage! {
 
 		// round 2
 
-		// ith entry is a list of disputes against dealers raised by node i submitted in round 2
-		DisputesAgainstDealer get(fn disputes_against_dealer): Vec<Vec<AuthIndex>>;
+		// ith entry is a list of disputes against creators raised by node i submitted in round 2
+		DisputesAgainstDealer get(fn disputes_against_creator): Vec<Vec<(AuthIndex, EncryptionKey)>>;
 		// list of n bools: ith is true <=> both the below conditions are satisfied:
 		// 1) (i+1)th node succesfully participated in round 0 and round 1
 		// 2) there was no succesful dispute that proves cheating of (i+1)th node in round 2
-		IsCorrectDealer get(fn is_correct_dealer): Vec<bool>;
+		IsCorrectDealer get(fn is_correct_creator): Vec<bool>;
 
 
 		// round 3
@@ -251,7 +239,7 @@ decl_module! {
 		}
 
 		#[weight = 0]
-		pub fn post_disputes(origin, disputes: Vec<AuthIndex>, hash_round1: T::Hash) {
+		pub fn post_disputes(origin, disputes: Vec<(AuthIndex, EncryptionKey)>, hash_round1: T::Hash) {
 			let now = <frame_system::Module<T>>::block_number();
 			if !(now > T::RoundEnds::get()[1] && now <= T::RoundEnds::get()[2]) {
 				return Ok(());
@@ -263,9 +251,27 @@ decl_module! {
 				let correct_hash_round1 = <frame_system::Module<T>>::block_hash(round1_number);
 				if hash_round1 == correct_hash_round1 {
 						DisputesAgainstDealer::mutate(|ref mut values| values[ix as usize] = disputes.clone());
-						// TODO verify disputes
 						IsCorrectDealer::mutate(|ref mut values|
-							disputes.iter().for_each(|ix| values[*ix as usize] = false)
+							disputes.into_iter().for_each(|(creator, ek)| {
+								if !Self::check_encryption_key(&ek, creator as usize, ix as usize) {
+									// TODO what do we do with someone who issued unfounded dispute?
+									return;
+								}
+								let encrypted_share = Self::encrypted_shares_lists()[creator as usize][ix as usize];
+								if encrypted_share.is_none() {
+									return
+								}
+								let encrypted_share = &Self::encrypted_shares_lists()[creator as usize][ix as usize]
+									.clone()
+									.unwrap();
+								let share = ek.decrypt(&encrypted_share);
+								if share.is_none() || !Self::verify_share(&share.unwrap(), creator as usize, ix) {
+									values[creator as usize] = false;
+								} else {
+									// TODO what do we do with someone who issued unfounded dispute?
+								}
+
+								})
 						);
 				}
 			}
@@ -276,7 +282,7 @@ decl_module! {
 				return
 			}
 
-			let qualified = Self::is_correct_dealer();
+			let qualified = Self::is_correct_creator();
 			let comms = Self::committed_polynomials()
 				.into_iter()
 				.enumerate()
@@ -292,10 +298,10 @@ decl_module! {
 			for ix in 0..n_members {
 				let x = &Scalar::from((ix + 1) as u64);
 				let part_keys = (0..n_members)
-					.filter(|dealer| {
-						qualified[*dealer] && !Self::committed_polynomials()[*dealer].is_empty()
+					.filter(|creator| {
+						qualified[*creator] && !Self::committed_polynomials()[*creator].is_empty()
 					})
-					.map(|dealer| Commitment::poly_eval(&Self::committed_polynomials()[dealer], x))
+					.map(|creator| Commitment::poly_eval(&Self::committed_polynomials()[creator], x))
 					.collect();
 				vks.push(Commitment::derive_key(part_keys))
 			}
@@ -334,7 +340,9 @@ impl<T: Trait> Module<T> {
 			EncryptedSharesLists::put(
 				sp_std::vec![sp_std::vec![None::<EncryptedShare>; n_members]; n_members],
 			);
-			DisputesAgainstDealer::put(sp_std::vec![Vec::<AuthIndex>::new(); n_members]);
+			DisputesAgainstDealer::put(
+				sp_std::vec![Vec::<(AuthIndex, EncryptionKey)>::new(); n_members],
+			);
 			IsCorrectDealer::put(sp_std::vec![false; n_members]);
 		}
 	}
@@ -370,7 +378,6 @@ impl<T: Trait> Module<T> {
 			None => return,
 		};
 
-		// TODO: encrypt the key in the store?
 		let st_key = Self::build_storage_key(b"enc_key", 0);
 		let val = StorageValueRef::persistent(&st_key);
 		let res = val.mutate(|last_set: Option<Option<RawSecret>>| match last_set {
@@ -416,7 +423,6 @@ impl<T: Trait> Module<T> {
 			_ => Ok(gen_poly_coeffs(threshold - 1)),
 		});
 
-		// TODO: meh borrow checker
 		if res.is_err() {
 			return;
 		}
@@ -447,7 +453,6 @@ impl<T: Trait> Module<T> {
 			comms.push(Commitment::new(poly[i as usize]));
 		}
 
-		// TODO: in Milestone 3 the shares need to be encrypted
 		// 4. send encrypted secret shares
 		let round0_number: T::BlockNumber = T::RoundEnds::get()[0];
 		let hash_round0 = <frame_system::Module<T>>::block_hash(round0_number);
@@ -508,9 +513,9 @@ impl<T: Trait> Module<T> {
 				.clone()
 				.unwrap();
 			let share = ek.as_ref().unwrap().decrypt(&encrypted_share);
-			if share.is_none() {
+			if share.is_none() || !Self::verify_share(&share.unwrap(), creator, my_ix) {
 				// TODO add proper proof and commitment verification
-				disputes.push(creator as AuthIndex);
+				disputes.push((creator as AuthIndex, ek.clone().unwrap()));
 			} else {
 				shares[creator] = Some(share.unwrap().to_bytes());
 			}
@@ -550,7 +555,7 @@ impl<T: Trait> Module<T> {
 		const ALREADY_SET: () = ();
 
 		let threshold = Threshold::get();
-		let qualified = Self::is_correct_dealer();
+		let qualified = Self::is_correct_creator();
 		let n_qualified = qualified.iter().map(|&v| v as u64).sum::<u64>();
 		// TODO: (DAMIAN) I think we can skip this check -- it does not buy us anything
 		assert!(
@@ -626,6 +631,23 @@ impl<T: Trait> Module<T> {
 			});
 
 		keys
+	}
+
+	fn verify_share(share: &Scalar, creator: usize, issuer: u64) -> bool {
+		Commitment::poly_eval(
+			&Self::committed_polynomials()[creator],
+			&Scalar::from(issuer + 1),
+		)
+		.verify_share(&share)
+	}
+
+	fn check_encryption_key(encryption_key: &EncryptionKey, creator: usize, issuer: usize) -> bool {
+		let epk1 = &Self::encryption_pks()[creator];
+		let epk2 = &Self::encryption_pks()[issuer];
+		if epk1.is_none() || epk2.is_none() {
+			return false;
+		}
+		encryption_key.is_correct(epk1.as_ref().unwrap(), epk2.as_ref().unwrap())
 	}
 
 	pub fn master_verification_key() -> Option<VerifyKey> {

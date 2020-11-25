@@ -70,7 +70,7 @@ decl_module! {
 
 		fn on_initialize(now: T::BlockNumber) -> Weight {
 			if now == T::RandomnessVerifierReady::get() {
-				assert!(!<Self as Store>::Verifier::exists());
+				assert!(!Verifier::exists());
 				assert!(Self::set_master_key());
 			}
 
@@ -84,15 +84,15 @@ decl_module! {
 
 			assert!(Self::verifier().verify(&randomness), "Failed to verify randomness");
 
-			assert!(!<Self as Store>::DidUpdate::exists(), "Randomness must be set only once in the block");
+			assert!(!DidUpdate::exists(), "Randomness must be set only once in the block");
 
 			<Self as Store>::Seed::put(randomness);
-			<Self as Store>::DidUpdate::put(true);
+			DidUpdate::put(true);
 		}
 
 		fn on_finalize(bn: T::BlockNumber) {
 			if bn >= T::StartHeight::get().into() {
-				assert!(<Self as Store>::DidUpdate::take(), "Randomness must be put into the block");
+				assert!(DidUpdate::take(), "Randomness must be put into the block");
 			}
 		}
 	}
@@ -156,7 +156,7 @@ impl<T: Trait> ProvideInherent for Module<T> {
 			return Ok(());
 		}
 
-		if !<Self as Store>::Verifier::exists() {
+		if !Verifier::exists() {
 			return Err(sp_randomness_beacon::inherents::InherentError::VerifyKeyNotSet);
 		}
 		let randomness = match call {

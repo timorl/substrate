@@ -54,7 +54,7 @@ impl Decode for VerifyKey {
 		bytes.copy_from_slice(&vec[..]);
 		let point = G2Affine::from_compressed(&bytes);
 		if point.is_none().unwrap_u8() == 1 {
-			return Err("could not decode G1Affine point".into());
+			return Err("could not decode G2Affine point".into());
 		}
 
 		Ok(VerifyKey {
