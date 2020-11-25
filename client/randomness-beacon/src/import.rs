@@ -105,9 +105,11 @@ where
 			return res;
 		}
 
-
-		info!("We've got a block number {:?}",num);
-		if let Err(err) = self.randomness_nonce_tx.try_send(NonceInfo::new(nonce, num)) {
+		info!("We've got a block number {:?}", num);
+		if let Err(err) = self
+			.randomness_nonce_tx
+			.try_send(NonceInfo::new(nonce, num))
+		{
 			info!(target: "import", "error when try_send topic through notifier {}", err);
 			return Err(Error::TransmitErr.into());
 		}
@@ -133,7 +135,7 @@ mod tests {
 		let res = import.import_block(block, HashMap::new());
 		assert!(res.is_ok());
 
-		let nonce = rx.try_next().unwrap().unwrap();
-		assert!(nonce[..] == target_nonce[..]);
+		let ni = rx.try_next().unwrap().unwrap();
+		assert!(ni.nonce()[..] == target_nonce[..]);
 	}
 }
