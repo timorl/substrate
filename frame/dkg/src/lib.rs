@@ -172,9 +172,6 @@ decl_storage! {
 
 
 		// round 2
-
-		// ith entry is a list of disputes against creators raised by node i submitted in round 2
-		DisputesAgainstDealer get(fn disputes_against_creator): Vec<Vec<(AuthIndex, EncryptionKey)>>;
 		// list of n bools: ith is true <=> both the below conditions are satisfied:
 		// 1) (i+1)th node succesfully participated in round 0 and round 1
 		// 2) there was no succesful dispute that proves cheating of (i+1)th node in round 2
@@ -188,6 +185,7 @@ decl_storage! {
 
 		/// The current authorities
 		pub Authorities get(fn authorities): Vec<T::AuthorityId>;
+
 
 		/// The threshold of BLS scheme
 		pub Threshold: u64;
@@ -218,21 +216,35 @@ decl_module! {
 			}
 		}
 
-		#[weight = (shares.len() as u64 + 1)*(1_000_000)]
+		#[weight = ((shares.len() + comm_poly.len()) as u64 + 1)*(1_000_000)]
 		pub fn post_secret_shares(origin, shares: Vec<Option<EncryptedShare>>, comm_poly: Vec<Commitment>, hash_round0: T::Hash) {
 			let now = <frame_system::Module<T>>::block_number();
 			if !(now > T::RoundEnds::get()[0] && now <= T::RoundEnds::get()[1]) {
+				debug::info!("Wrong block number for post_secret_shares: {:?}.", now);
+				return Ok(());
+			}
+			if (shares.len() != Self::authorities().len()) || (comm_poly.len() as u64 != Self::threshold()) {
+				debug::info!("Wrong shares len {:} or comm_poly len {:?} for post_secret_shares.",
+					shares.len(),
+					comm_poly.len());
 				return Ok(());
 			}
 
 			let who = ensure_signed(origin)?;
 			if let Some(ix) = Self::authority_index(who){
-				let round0_number: T::BlockNumber = T::RoundEnds::get()[0];
-				let correct_hash_round0 = <frame_system::Module<T>>::block_hash(round0_number);
-				if hash_round0 == correct_hash_round0 {
-					EncryptedSharesLists::mutate(|ref mut values| values[ix as usize] = shares);
-					CommittedPolynomials::mutate(|ref mut values| values[ix as usize] = comm_poly);
-					IsCorrectDealer::mutate(|ref mut values| values[ix as usize] = true);
+				if Self::encryption_pks()[ix as usize].is_some() {
+					let round0_number: T::BlockNumber = T::RoundEnds::get()[0];
+					let correct_hash_round0 = <frame_system::Module<T>>::block_hash(round0_number);
+					if hash_round0 == correct_hash_round0 {
+						EncryptedSharesLists::mutate(|ref mut values| values[ix as usize] = shares);
+						CommittedPolynomials::mutate(|ref mut values| values[ix as usize] = comm_poly);
+						IsCorrectDealer::mutate(|ref mut values| values[ix as usize] = true);
+						debug::info!("Successfully executed post_secret_shares for id {:?}.", ix);
+					} else {
+						debug::info!("Wrong hash_round0 value for post_secret_shares.");
+					}
+				} else {
+					debug::info!("A dealer {:?} who has not posted EncryptionPK tried to submit secret shares.", ix);
 				}
 			}
 		}
@@ -241,6 +253,7 @@ decl_module! {
 		pub fn post_disputes(origin, disputes: Vec<(AuthIndex, EncryptionKey)>, hash_round1: T::Hash) {
 			let now = <frame_system::Module<T>>::block_number();
 			if !(now > T::RoundEnds::get()[1] && now <= T::RoundEnds::get()[2]) {
+				debug::info!("Wrong block number for post_disputes: {:?}.", now);
 				return Ok(());
 			}
 
@@ -249,29 +262,38 @@ decl_module! {
 				let round1_number: T::BlockNumber = T::RoundEnds::get()[1];
 				let correct_hash_round1 = <frame_system::Module<T>>::block_hash(round1_number);
 				if hash_round1 == correct_hash_round1 {
-						DisputesAgainstDealer::mutate(|ref mut values| values[ix as usize] = disputes.clone());
-						IsCorrectDealer::mutate(|ref mut values|
-							disputes.into_iter().for_each(|(creator, ek)| {
-								if !Self::check_encryption_key(&ek, creator as usize, ix as usize) {
-									// TODO what do we do with someone who issued unfounded dispute?
-									return;
-								}
-								let encrypted_share = Self::encrypted_shares_lists()[creator as usize][ix as usize];
-								if encrypted_share.is_none() {
-									return
-								}
-								let encrypted_share = &Self::encrypted_shares_lists()[creator as usize][ix as usize]
-									.clone()
-									.unwrap();
-								let share = ek.decrypt(&encrypted_share);
-								if share.is_none() || !Self::verify_share(&share.unwrap(), creator as usize, ix) {
-									values[creator as usize] = false;
-								} else {
-									// TODO what do we do with someone who issued unfounded dispute?
-								}
-
-								})
-						);
+					debug::info!("Considering {:?} disputes for {:?}.", disputes.len(), ix);
+					IsCorrectDealer::mutate(|ref mut values|
+						disputes.into_iter().for_each(|(creator, ek)| {
+							if values[creator as usize] == false {
+								// No need to consider this dispute, the creator is already marked as incorrect.
+								return
+							}
+							if !Self::check_encryption_key(&ek, creator as usize, ix as usize) {
+								// there are 3 possible situations when this if fires, in all cases we can ignore this dispute
+								// if ek is wrong then this dispute is unfounded
+								// if creator's encryption key is None then he is marked as incorrect anyway
+								// if ix's encryption key is None then this dispute is unfounded
+								return
+							}
+							// The below line is fine since encrypted_shares_lists is initialized as a square
+							// array with all Nones.
+							let encrypted_share = Self::encrypted_shares_lists()[creator as usize][ix as usize];
+							if encrypted_share.is_none() {
+								values[creator as usize] = false;
+								return
+							}
+							let encrypted_share = &Self::encrypted_shares_lists()[creator as usize][ix as usize]
+								.clone()
+								.unwrap();
+							let share = ek.decrypt(&encrypted_share);
+							if share.is_none() || !Self::verify_share(&share.unwrap(), creator as usize, ix) {
+								values[creator as usize] = false;
+							}
+						})
+					);
+				} else {
+					debug::info!("Wrong hash_round0 value for post_disputes.");
 				}
 			}
 		}
@@ -338,9 +360,6 @@ impl<T: Trait> Module<T> {
 			CommittedPolynomials::put(sp_std::vec![Vec::<Commitment>::new(); n_members]);
 			EncryptedSharesLists::put(
 				sp_std::vec![sp_std::vec![None::<EncryptedShare>; n_members]; n_members],
-			);
-			DisputesAgainstDealer::put(
-				sp_std::vec![Vec::<(AuthIndex, EncryptionKey)>::new(); n_members],
 			);
 			IsCorrectDealer::put(sp_std::vec![false; n_members]);
 		}

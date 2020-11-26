@@ -46,10 +46,21 @@ impl Decode for EncryptionPublicKey {
 		if g2point.is_none().unwrap_u8() == 1 {
 			return Err("could not decode G2Affine point".into());
 		}
-		Ok(EncryptionPublicKey {
-			g1point: g1point.unwrap(),
-			g2point: g2point.unwrap(),
-		})
+		// need to check if both exponents are the same
+		let g1point = g1point.unwrap();
+		let g2point = g2point.unwrap();
+		let p1 = G1Affine::generator().pairing_with(&g2point);
+		let p2 = g1point.pairing_with(&G2Affine::generator());
+
+		if p1 == p2 {
+			Ok(EncryptionPublicKey {
+				g1point: g1point,
+				g2point: g2point,
+			})
+		} else {
+			Err("exponents of g1 and g2 do not match".into())
+		}
+
 	}
 }
 
