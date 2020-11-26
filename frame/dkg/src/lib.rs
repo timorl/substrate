@@ -205,8 +205,7 @@ decl_storage! {
 decl_module! {
 	pub struct Module<T: Trait> for enum Call where origin: T::Origin {
 
-		// TODO: we need to be careful with weights -- for now they are 0, but need to think about them later
-		#[weight = 0]
+		#[weight = 1_000_000]
 		pub fn post_encryption_key(origin, pk: EncryptionPublicKey) {
 			let now = <frame_system::Module<T>>::block_number();
 			if !(now <= T::RoundEnds::get()[0]) {
@@ -219,7 +218,7 @@ decl_module! {
 			}
 		}
 
-		#[weight = 0]
+		#[weight = (shares.len() as u64 + 1)*(1_000_000)]
 		pub fn post_secret_shares(origin, shares: Vec<Option<EncryptedShare>>, comm_poly: Vec<Commitment>, hash_round0: T::Hash) {
 			let now = <frame_system::Module<T>>::block_number();
 			if !(now > T::RoundEnds::get()[0] && now <= T::RoundEnds::get()[1]) {
@@ -238,7 +237,7 @@ decl_module! {
 			}
 		}
 
-		#[weight = 0]
+		#[weight = (disputes.len() as u64 + 1)*(4_000_000)]
 		pub fn post_disputes(origin, disputes: Vec<(AuthIndex, EncryptionKey)>, hash_round1: T::Hash) {
 			let now = <frame_system::Module<T>>::block_number();
 			if !(now > T::RoundEnds::get()[1] && now <= T::RoundEnds::get()[2]) {

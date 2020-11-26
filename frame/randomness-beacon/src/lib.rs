@@ -77,8 +77,7 @@ decl_module! {
 			0
 		}
 
-		// TODO add verify
-		#[weight = 0]
+		#[weight = 10_000_000]
 		fn set_random_bytes(origin, randomness: Randomness<T::Hash>)  {
 			ensure_none(origin)?;
 
