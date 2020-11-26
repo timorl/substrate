@@ -239,7 +239,7 @@ decl_module! {
 						EncryptedSharesLists::mutate(|ref mut values| values[ix as usize] = shares);
 						CommittedPolynomials::mutate(|ref mut values| values[ix as usize] = comm_poly);
 						IsCorrectDealer::mutate(|ref mut values| values[ix as usize] = true);
-						debug::info!("Successfully executed post_secret_shares for id {:?}.", ix);
+						debug::info!("Successfully executed post_secret_shares for id {:?} in block {:?}.", ix, now);
 					} else {
 						debug::info!("Wrong hash_round0 value for post_secret_shares.");
 					}
@@ -262,7 +262,7 @@ decl_module! {
 				let round1_number: T::BlockNumber = T::RoundEnds::get()[1];
 				let correct_hash_round1 = <frame_system::Module<T>>::block_hash(round1_number);
 				if hash_round1 == correct_hash_round1 {
-					debug::info!("Considering {:?} disputes for {:?}.", disputes.len(), ix);
+					debug::info!("Considering {:?} disputes for {:?} in block {:?}", disputes.len(), ix, now);
 					IsCorrectDealer::mutate(|ref mut values|
 						disputes.into_iter().for_each(|(creator, ek)| {
 							if values[creator as usize] == false {

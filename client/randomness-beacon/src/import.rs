@@ -105,7 +105,7 @@ where
 			return res;
 		}
 
-		info!("We've got a block number {:?}", num);
+		info!("We've got a block number {:?} with hash {:?}", num, nonce);
 		if let Err(err) = self
 			.randomness_nonce_tx
 			.try_send(NonceInfo::new(nonce, num))
