@@ -523,8 +523,14 @@ impl<T: Trait> Module<T> {
 
 		for creator in 0..n_members {
 			let ek = &encryption_keys[creator];
-			if ek.is_none() || Self::encrypted_shares_lists()[creator][my_ix as usize].is_none() {
-				// TODO no one have seen shares from this creator, we just skip it
+			if ek.is_none() {
+				// either the creator or us did not provide an encryption key
+				// in the former case the creator is marked as incorrect dealer already
+				// in the latter -- there is nothing to dispute
+				continue;
+			}
+			if Self::encrypted_shares_lists()[creator][my_ix as usize].is_none() {
+				disputes.push((creator as AuthIndex, ek.clone().unwrap()));
 				continue;
 			}
 			let encrypted_share = &Self::encrypted_shares_lists()[creator][my_ix as usize]
