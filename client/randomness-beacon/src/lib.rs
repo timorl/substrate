@@ -50,7 +50,8 @@ where
 
 const RANDOMNESS_BEACON_ID: [u8; 4] = *b"rndb";
 const RB_PROTOCOL_NAME: &'static str = "/randomness_beacon";
-pub const SEND_INTERVAL: time::Duration = time::Duration::from_secs(1);
+pub const SEND_INTERVAL: time::Duration = time::Duration::from_secs(5);
+pub const INITIAL_WAIT: time::Duration = time::Duration::from_secs(0);
 
 pub mod authorship;
 pub mod import;
@@ -390,7 +391,7 @@ where
 				if let Some(rbbox) = maybe_rbbox {
 					let (incoming, msg, shares) =
 						self.initialize_nonce(new_nonce_info.clone(), &rbbox);
-					let periodic_sender = futures_timer::Delay::new(SEND_INTERVAL);
+					let periodic_sender = futures_timer::Delay::new(INITIAL_WAIT);
 					self.topics
 						.insert(topic, (incoming, msg, periodic_sender, rbbox, shares));
 				} else {
@@ -406,6 +407,8 @@ where
 
 		for (_, (incoming, maybe_msg, periodic_sender, rbbox, shares)) in self.topics.iter_mut() {
 			if let Some(msg) = maybe_msg {
+				// msg is our share, we need to send it from time to time.
+				// This executes only if the node is in the committee.
 				while let Poll::Ready(()) = periodic_sender.poll_unpin(cx) {
 					periodic_sender.reset(SEND_INTERVAL);
 					msg.send();

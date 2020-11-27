@@ -327,17 +327,23 @@ decl_module! {
 		}
 
 		fn offchain_worker(block_number: T::BlockNumber) {
-			// At the end of Round 2, the public Keybox is ready
-			// Round 3 is only for the offchain worker to put the secret key in its storage.
-			if block_number < T::RoundEnds::get()[0]  {
-					Self::handle_round0();
-			} else if block_number < T::RoundEnds::get()[1] {
-					Self::handle_round1();
-			} else if block_number < T::RoundEnds::get()[2] {
-					Self::handle_round2();
-			} else if block_number < T::RoundEnds::get()[3] {
-					Self::handle_round3();
+			if Self::local_authority_key().is_some() {
+				debug::info!("Offchain worker call at block {:?}.", block_number);
+				// At the end of Round 2, the public Keybox is ready
+				// Round 3 is only for the offchain worker to put the secret key in its storage.
+				if block_number < T::RoundEnds::get()[0]  {
+						Self::handle_round0();
+				} else if block_number < T::RoundEnds::get()[1] {
+						Self::handle_round1();
+				} else if block_number < T::RoundEnds::get()[2] {
+						Self::handle_round2();
+				} else if block_number < T::RoundEnds::get()[3] {
+						Self::handle_round3();
+				}
+			} else {
+				debug::info!("Offchain worker call at block {:?}, ignored as we are not a committee member.", block_number);
 			}
+
 		}
 	}
 }
