@@ -29,7 +29,6 @@ type FullClient = sc_service::TFullClient<Block, RuntimeApi, Executor>;
 type FullBackend = sc_service::TFullBackend<Block>;
 type FullSelectChain = sc_consensus::LongestChain<FullBackend, Block>;
 
-// TODO add option to wait for finalization of block with keybox from dkg
 use sp_randomness_beacon::RandomnessBeaconApi;
 fn get_start_height<C>(client: Arc<C>) -> rb_node_runtime::BlockNumber
 where

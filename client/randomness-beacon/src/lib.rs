@@ -39,12 +39,14 @@ use std::collections::BinaryHeap;
 //pub type NonceInfo<B> = (<B as BlockT>::Hash, NumberFor<B>);
 pub type Nonce<B> = <B as BlockT>::Hash;
 
-#[derive(Copy, Clone, Eq, PartialEq)]
-pub struct NonceInfo<B> where B: BlockT {
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub struct NonceInfo<B>
+where
+	B: BlockT,
+{
 	nonce: Nonce<B>,
-    height: NumberFor<B>,
+	height: NumberFor<B>,
 }
-
 
 const RANDOMNESS_BEACON_ID: [u8; 4] = *b"rndb";
 const RB_PROTOCOL_NAME: &'static str = "/randomness_beacon";
@@ -81,18 +83,20 @@ impl<B: BlockT> NonceInfo<B> {
 }
 
 impl<B: BlockT> Ord for NonceInfo<B> {
-    fn cmp(&self, other: &Self) -> Ordering {
-    	// We want the lowest height to come first
-        other.height.cmp(&self.height)
-            .then_with(|| self.nonce.cmp(&other.nonce))
-    }
+	fn cmp(&self, other: &Self) -> Ordering {
+		// We want the lowest height to come first
+		other
+			.height
+			.cmp(&self.height)
+			.then_with(|| self.nonce.cmp(&other.nonce))
+	}
 }
 
 // `PartialOrd` needs to be implemented as well.
 impl<B: BlockT> PartialOrd for NonceInfo<B> {
-    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        Some(self.cmp(other))
-    }
+	fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+		Some(self.cmp(other))
+	}
 }
 
 pub struct GossipValidator {}
@@ -211,7 +215,7 @@ where
 	}
 
 	// prunes all topics that are >=30 blocks lower than at_height
-	fn prune_old_topics(& mut self, at_height: NumberFor<B>) {
+	fn prune_old_topics(&mut self, at_height: NumberFor<B>) {
 		while let Some(nonce_info) = self.height_queue.peek() {
 			// TODO: make this constant 30 into a parameter
 			if *nonce_info.height() + 30.into() <= at_height {
@@ -224,7 +228,7 @@ where
 	}
 
 	fn initialize_nonce(
-		& mut self,
+		&mut self,
 		nonce_info: NonceInfo<B>,
 		rbbox: &RBBox<Nonce<B>>,
 	) -> (
@@ -286,14 +290,14 @@ where
 		let block_hash = nonce_info.nonce().clone();
 		let block_height = nonce_info.height();
 
-
 		let height_master_ready = match self
 			.dkg_api
 			.runtime_api()
-			.master_key_ready(&BlockId::Hash(block_hash)) {
-				Ok(height) => height,
-				_ => return None
-			};
+			.master_key_ready(&BlockId::Hash(block_hash))
+		{
+			Ok(height) => height,
+			_ => return None,
+		};
 
 		if height_master_ready > *block_height {
 			// the keys are not ready yet
@@ -328,10 +332,7 @@ where
 				http::connect(url.as_str())
 					.and_then(move |client: OffchainClient| {
 						client
-							.get_local_storage(
-								StorageKind::PERSISTENT,
-								Bytes(storage_key),
-							)
+							.get_local_storage(StorageKind::PERSISTENT, Bytes(storage_key))
 							.map(move |enc_key| {
 								let raw_key =
 									<[u64; 4]>::decode(&mut &enc_key.unwrap()[..]).unwrap();
@@ -387,7 +388,8 @@ where
 				// received new nonce, need to fetch the corresponding rbbox
 				let maybe_rbbox = self.get_rbbox(&new_nonce_info);
 				if let Some(rbbox) = maybe_rbbox {
-					let (incoming, msg, shares) = self.initialize_nonce(new_nonce_info.clone(), &rbbox);
+					let (incoming, msg, shares) =
+						self.initialize_nonce(new_nonce_info.clone(), &rbbox);
 					let periodic_sender = futures_timer::Delay::new(SEND_INTERVAL);
 					self.topics
 						.insert(topic, (incoming, msg, periodic_sender, rbbox, shares));
@@ -446,15 +448,46 @@ where
 #[cfg(test)]
 mod tests {
 	use super::*;
-	//use futures::channel::mpsc::channel;
+	use futures::channel::mpsc::channel;
 	use futures::channel::mpsc::{unbounded, UnboundedSender};
+	use jsonrpc_core::IoHandler;
+	use jsonrpc_http_server::{RestApi, Server, ServerBuilder};
 	use sc_network::{Event, ReputationChange};
 	use sc_network_gossip::Network;
+	use sc_rpc::offchain::{Offchain, OffchainApi};
+	use sc_rpc_api::DenyUnsafe;
+	use sp_api::{ApiRef, ProvideRuntimeApi};
+	use sp_core::{offchain::storage::InMemOffchainStorage, offchain::StorageKind, Bytes};
+	use sp_dkg::{AuthIndex, DKGApi, Scalar, VerifyKey};
 	use sp_runtime::traits::Block as BlockT;
 	use sp_runtime::ConsensusEngineId;
 	use std::borrow::Cow;
 	use std::sync::{Arc, Mutex};
-	//use substrate_test_runtime_client::{runtime::Block, Backend, Client};
+	use substrate_test_runtime_client::runtime::{Block, BlockNumber, Hash};
+
+	fn serve() -> Server {
+		let builder = ServerBuilder::new(io()).rest_api(RestApi::Unsecure);
+		builder.start_http(&"127.0.0.1:0".parse().unwrap()).unwrap()
+	}
+
+	const KEY: &[u8; 3] = b"key";
+	const THRESHOLD: u64 = 1;
+
+	fn io() -> IoHandler {
+		let mut io = IoHandler::default();
+		let storage = InMemOffchainStorage::default();
+		let offchain = Offchain::new(storage, DenyUnsafe::No);
+		let key = Bytes(KEY.to_vec());
+		let value = Bytes(Scalar::from_raw([1, 7, 2, 9]).to_bytes().to_vec());
+
+		assert!(offchain
+			.set_local_storage(StorageKind::PERSISTENT, key, value)
+			.is_ok());
+
+		io.extend_with(sc_rpc::offchain::OffchainApi::to_delegate(offchain));
+
+		io
+	}
 
 	#[derive(Clone, Default)]
 	struct TestNetwork {
@@ -491,43 +524,95 @@ mod tests {
 		}
 	}
 
-	// TODO fixme
-	//#[test]
-	//#[ignore]
-	//fn starts_messaging_on_nonce_notification() {
-	//	let (mut a_notify_nonce_tx, a_notify_nonce_rx) = channel(10);
-	//	let (tx, _a_randomness_rx) = std::sync::mpsc::channel();
-	//	let a_randomness_tx = Some(tx);
+	#[derive(Default, Clone)]
+	struct TestApi {
+		master_verification_key: Option<VerifyKey>,
+		master_key_ready: NumberFor<Block>,
+		threshold: u64,
+		authority_index: Option<AuthIndex>,
+		verification_keys: Option<Vec<VerifyKey>>,
+		public_keybox_parts: Option<(Option<AuthIndex>, Vec<VerifyKey>, VerifyKey, u64)>,
+		storage_key_sk: Option<Vec<u8>>,
+	}
 
-	//	let client = Arc::new(substrate_test_runtime_client::new());
-	//	let network = TestNetwork::default();
+	#[derive(Default, Clone)]
+	struct RuntimeApi {
+		inner: TestApi,
+	}
 
-	//	let threshold = 2;
-	//	let rpc_port = 0;
+	impl ProvideRuntimeApi<Block> for TestApi {
+		type Api = RuntimeApi;
 
-	//	let mut alice_rg = RandomnessGossip::new(
-	//		threshold,
-	//		a_notify_nonce_rx,
-	//		network.clone(),
-	//		a_randomness_tx,
-	//		client,
-	//		rpc_port,
-	//	);
+		fn runtime_api<'a>(&'a self) -> ApiRef<'a, Self::Api> {
+			RuntimeApi {
+				inner: self.clone(),
+			}
+			.into()
+		}
+	}
 
-	//	let nonce = H256::default();
-	//	let enc_nonce = H256::default().encode();
-	//	assert!(a_notify_nonce_tx.try_send(enc_nonce.clone()).is_ok());
+	sp_api::mock_impl_runtime_apis! {
+		impl DKGApi<Block> for RuntimeApi {
+			fn master_verification_key(&self) -> Option<VerifyKey> {
+				self.inner.master_verification_key.clone()
+			}
 
-	//	block_on(poll_fn(|cx| {
-	//		for _ in 0..50 {
-	//			let res = alice_rg.poll_unpin(cx);
-	//			info!("res: {:?}", res);
-	//			if let Poll::Ready(()) = res {
-	//				unreachable!("As long as network is alive, RandomnessGossip should go on.");
-	//			}
-	//		}
-	//		Poll::Ready(())
-	//	}));
-	//	assert!(alice_rg.topics.contains_key(&nonce));
-	//}
+			fn master_key_ready() -> NumberFor<Block>{
+				self.inner.master_key_ready.clone()
+			}
+
+			fn threshold() -> u64{
+				self.inner.threshold.clone()
+			}
+
+			fn authority_index() -> Option<AuthIndex>{
+				self.inner.authority_index.clone()
+			}
+
+			fn verification_keys() -> Option<Vec<VerifyKey>>{
+				self.inner.verification_keys.clone()
+			}
+
+			fn public_keybox_parts() -> Option<(Option<AuthIndex>, Vec<VerifyKey>, VerifyKey, u64)>{
+				Some((Some(0), vec![VerifyKey::default()], VerifyKey::default(), THRESHOLD))
+			}
+
+			fn storage_key_sk() -> Option<Vec<u8>>{
+				Some(KEY.to_vec())
+			}
+		}
+	}
+
+	#[test]
+	fn starts_messaging_on_nonce_notification() {
+		let server = serve();
+		let (mut ni_tx, ni_rx) = channel(1);
+		let (tx, _rx) = std::sync::mpsc::channel();
+		let randomness_tx = Some(tx);
+
+		let dkg_api = Arc::new(TestApi::default());
+		let network = TestNetwork::default();
+
+		let mut alice_rg =
+			RandomnessGossip::new(THRESHOLD, ni_rx, network.clone(), randomness_tx, dkg_api, 0);
+
+		let ni = NonceInfo {
+			nonce: Hash::default(),
+			height: BlockNumber::default(),
+		};
+		assert!(ni_tx.try_send(ni.clone()).is_ok());
+
+		futures::executor::block_on(futures::future::poll_fn(|cx| {
+			for _ in 0..50 {
+				let res = alice_rg.poll_unpin(cx);
+				info!("res: {:?}", res);
+				if let Poll::Ready(()) = res {
+					unreachable!("As long as network is alive, RandomnessGossip should go on.");
+				}
+			}
+			Poll::Ready(())
+		}));
+		assert!(alice_rg.topics.contains_key(&ni.nonce));
+		server.close();
+	}
 }

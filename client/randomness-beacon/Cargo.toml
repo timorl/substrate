@@ -22,6 +22,8 @@ hyper = "0.12.35"
 parking_lot = "0.10.0"
 rand = "0.7.2"
 jsonrpc-core-client= { version = "15.0.0", default-features = false, features = ["http"] }
+jsonrpc-http-server= { version = "15.0.0"}
+jsonrpc-core= { version = "15.0.0"}
 codec = { package = "parity-scale-codec", version = "1.3.1", default-features = false, features = ["derive"] }
 sp-arithmetic = { version = "2.0.0", path = "../../primitives/arithmetic" }
 sp-block-builder = { version = "2.0.0", path = "../../primitives/block-builder" }
@@ -51,6 +53,7 @@ log = { version = "0.4.8", optional = true }
 serde = { version = "1.0.101", optional = true, features = ["derive"] }
 sp-api = { version = "2.0.0", default-features = false, path = "../../primitives/api" }
 sc-rpc = { version = "2.0.0", path = "../rpc" }
+sc-rpc-api = { version = "0.8.0", path = "../rpc-api" }
 sp-core = { version = "2.0.0", default-features = false, path = "../../primitives/core" }
 sp-runtime = { version = "2.0.0", default-features = false, path = "../../primitives/runtime" }
 sp-std = { version = "2.0.0", default-features = false, path = "../../primitives/std" }
