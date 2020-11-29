@@ -28,6 +28,7 @@
 
 #![cfg_attr(not(feature = "std"), no_std)]
 
+use codec::Encode;
 use frame_support::{
 	decl_error, decl_module, decl_storage, traits::Get, traits::Randomness as RandomnessT,
 	weights::Weight,
@@ -38,6 +39,7 @@ use sp_randomness_beacon::{
 	inherents::{InherentError, INHERENT_IDENTIFIER},
 	Randomness, RandomnessVerifier,
 };
+use sp_runtime::traits::Hash;
 
 use sp_std::result;
 
@@ -171,8 +173,16 @@ impl<T: Trait> ProvideInherent for Module<T> {
 }
 
 impl<T: Trait> RandomnessT<T::Hash> for Module<T> {
-	// TODO: implement
-	fn random(_subject: &[u8]) -> T::Hash {
+	fn random(subject: &[u8]) -> T::Hash {
+		if <Self as Store>::Seed::exists() {
+			let seed = &<Self as Store>::Seed::get().encode()[..];
+			let mut subject = subject.to_vec();
+			subject.reserve(seed.len());
+			subject.extend_from_slice(seed);
+
+			return <T as frame_system::Trait>::Hashing::hash(&subject[..]);
+		}
+
 		T::Hash::default()
 	}
 }
