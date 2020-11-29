@@ -49,8 +49,6 @@ use sp_dkg::{
 
 mod tests;
 
-// TODO handle the situation when the node is not an authority
-
 // n is the number of nodes in the committee
 // node indices are 0-based: 0, 1, 2, ..., n-1
 // t is the threshold: it is necessary and sufficient to have t shares to combine
@@ -151,7 +149,6 @@ pub trait Trait: CreateSignedTransaction<Call<Self>> {
 	type MasterKeyReady: Get<Self::BlockNumber>;
 }
 
-// TODO pick hashing functions
 decl_storage! {
 	trait Store for Module<T: Trait> as DKGWorker {
 
@@ -538,7 +535,6 @@ impl<T: Trait> Module<T> {
 				.unwrap();
 			let share = ek.as_ref().unwrap().decrypt(&encrypted_share);
 			if share.is_none() || !Self::verify_share(&share.unwrap(), creator, my_ix) {
-				// TODO add proper proof and commitment verification
 				disputes.push((creator as AuthIndex, ek.clone().unwrap()));
 			} else {
 				shares[creator] = Some(share.unwrap().to_bytes());
@@ -578,16 +574,7 @@ impl<T: Trait> Module<T> {
 	fn handle_round3() {
 		const ALREADY_SET: () = ();
 
-		let threshold = Threshold::get();
 		let qualified = Self::is_correct_creator();
-		let n_qualified = qualified.iter().map(|&v| v as u64).sum::<u64>();
-		// TODO: (DAMIAN) I think we can skip this check -- it does not buy us anything
-		assert!(
-			n_qualified >= threshold,
-			"not enough qualified nodes: needs at least {}, got {}",
-			threshold,
-			n_qualified,
-		);
 
 		let st_key_secret_key = Self::build_storage_key(b"threshold_secret_key", 3);
 		let val = StorageValueRef::persistent(&st_key_secret_key);

@@ -60,7 +60,6 @@ impl Decode for EncryptionPublicKey {
 		} else {
 			Err("exponents of g1 and g2 do not match".into())
 		}
-
 	}
 }
 
@@ -88,7 +87,6 @@ impl EncryptionPublicKey {
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct EncryptionKey(G1Affine);
 
-// TODO write a macro for encode/decode
 impl Encode for EncryptionKey {
 	fn encode_to<T: Output>(&self, dest: &mut T) {
 		Encode::encode_to(&self.0.to_compressed().to_vec(), dest);
@@ -181,14 +179,13 @@ impl Commitment {
 	}
 
 	pub fn derive_key(comms: Vec<Commitment>) -> VerifyKey {
-		let g2point = comms
+		let point = comms
 			.into_iter()
 			.map(|c| G2Projective::from(c.g2point))
 			.fold(G2Projective::identity(), |a, b| a + b)
 			.into();
 
-		// TODO refactor
-		VerifyKey::decode(&mut &Commitment { g2point }.encode()[..]).unwrap()
+		VerifyKey { point }
 	}
 
 	pub fn poly_eval(coeffs: &Vec<Self>, x: &Scalar) -> Self {

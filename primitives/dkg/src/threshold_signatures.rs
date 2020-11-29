@@ -38,7 +38,7 @@ impl EncodeLike for Signature {}
 
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct VerifyKey {
-	point: G2Affine,
+	pub(crate) point: G2Affine,
 }
 
 impl Encode for VerifyKey {
