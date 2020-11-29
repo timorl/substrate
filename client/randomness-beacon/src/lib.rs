@@ -402,7 +402,7 @@ where
 			}
 		}
 		let randomness_tx = self.randomness_tx.clone();
-		let threshold = self.threshold.clone();
+		let threshold = self.threshold.clone() as usize;
 
 		for (_, (incoming, maybe_msg, periodic_sender, rbbox, shares)) in self.topics.iter_mut() {
 			if let Some(msg) = maybe_msg {
@@ -418,20 +418,8 @@ where
 					let GossipMessage::<B> { message, .. } =
 						GossipMessage::<B>::decode(&mut &notification.message[..]).unwrap();
 					let share = RandomnessShare::decode(&mut &*message.share).unwrap();
-					if rbbox.verify_randomness_share(&share) {
+					if shares.len() < threshold && rbbox.verify_randomness_share(&share) {
 						shares.push(share);
-						// TODO: the following needs an overhaul
-						if shares.len() == threshold as usize {
-							let randomness = rbbox.combine_shares(shares);
-
-							// When randomness succesfully combined, notify block proposer
-							if let Some(ref randomness_tx) = randomness_tx {
-								assert!(
-									randomness_tx.send(randomness).is_ok(),
-									"problem with sending new randomness to the block proposer"
-								);
-							}
-						}
 					}
 				}
 				Poll::Ready(None) => info!(
@@ -439,6 +427,18 @@ where
 					"poll_next_unpin returned Ready(None) ==> investigate!"
 				),
 				Poll::Pending => {}
+			}
+
+			if shares.len() == threshold {
+				let randomness = rbbox.combine_shares(shares);
+
+				// When randomness succesfully combined, notify block proposer
+				if let Some(ref randomness_tx) = randomness_tx {
+					assert!(
+						randomness_tx.send(randomness).is_ok(),
+						"problem with sending new randomness to the block proposer"
+					);
+				}
 			}
 		}
 		return Poll::Pending;
@@ -465,13 +465,12 @@ mod tests {
 	use std::sync::{Arc, Mutex};
 	use substrate_test_runtime_client::runtime::{Block, BlockNumber, Hash};
 
+	const KEY: &[u8; 3] = b"key";
+
 	fn serve() -> Server {
 		let builder = ServerBuilder::new(io()).rest_api(RestApi::Unsecure);
 		builder.start_http(&"127.0.0.1:0".parse().unwrap()).unwrap()
 	}
-
-	const KEY: &[u8; 3] = b"key";
-	const THRESHOLD: u64 = 1;
 
 	fn io() -> IoHandler {
 		let mut io = IoHandler::default();
@@ -535,6 +534,28 @@ mod tests {
 		storage_key_sk: Option<Vec<u8>>,
 	}
 
+	impl TestApi {
+		fn new(
+			master_verification_key: Option<VerifyKey>,
+			master_key_ready: NumberFor<Block>,
+			threshold: u64,
+			authority_index: Option<AuthIndex>,
+			verification_keys: Option<Vec<VerifyKey>>,
+			public_keybox_parts: Option<(Option<AuthIndex>, Vec<VerifyKey>, VerifyKey, u64)>,
+			storage_key_sk: Option<Vec<u8>>,
+		) -> Self {
+			TestApi {
+				master_verification_key,
+				master_key_ready,
+				threshold,
+				authority_index,
+				verification_keys,
+				public_keybox_parts,
+				storage_key_sk,
+			}
+		}
+	}
+
 	#[derive(Default, Clone)]
 	struct RuntimeApi {
 		inner: TestApi,
@@ -574,27 +595,44 @@ mod tests {
 			}
 
 			fn public_keybox_parts() -> Option<(Option<AuthIndex>, Vec<VerifyKey>, VerifyKey, u64)>{
-				Some((Some(0), vec![VerifyKey::default()], VerifyKey::default(), THRESHOLD))
+				self.inner.public_keybox_parts.clone()
 			}
 
 			fn storage_key_sk() -> Option<Vec<u8>>{
-				Some(KEY.to_vec())
+				self.inner.storage_key_sk.clone()
 			}
 		}
 	}
 
 	#[test]
 	fn starts_messaging_on_nonce_notification() {
+		let threshold = 1;
+
 		let server = serve();
 		let (mut ni_tx, ni_rx) = channel(1);
 		let (tx, _rx) = std::sync::mpsc::channel();
 		let randomness_tx = Some(tx);
 
-		let dkg_api = Arc::new(TestApi::default());
+		let public_keybox_parts = Some((
+			Some(0),
+			vec![VerifyKey::default()],
+			VerifyKey::default(),
+			threshold,
+		));
+		let storage_key_sk = Some(KEY.to_vec());
+		let dkg_api = Arc::new(TestApi::new(
+			None,
+			0,
+			threshold,
+			Some(0),
+			None,
+			public_keybox_parts,
+			storage_key_sk,
+		));
 		let network = TestNetwork::default();
 
 		let mut alice_rg =
-			RandomnessGossip::new(THRESHOLD, ni_rx, network.clone(), randomness_tx, dkg_api, 0);
+			RandomnessGossip::new(threshold, ni_rx, network.clone(), randomness_tx, dkg_api, 0);
 
 		let ni = NonceInfo {
 			nonce: Hash::default(),
@@ -613,6 +651,79 @@ mod tests {
 			Poll::Ready(())
 		}));
 		assert!(alice_rg.topics.contains_key(&ni.nonce));
+		server.close();
+	}
+
+	#[test]
+	#[ignore]
+	fn gathers_shares() {
+		let threshold = 2;
+		let network = TestNetwork::default();
+
+		let server = serve();
+
+		let public_keybox_parts = Some((
+			Some(0),
+			vec![VerifyKey::default()],
+			VerifyKey::default(),
+			threshold,
+		));
+		let storage_key_sk = Some(KEY.to_vec());
+		let dkg_api = Arc::new(TestApi::new(
+			Some(VerifyKey::default()),
+			0,
+			threshold,
+			Some(0),
+			None,
+			public_keybox_parts,
+			storage_key_sk,
+		));
+
+		let (tx, alice_rrx) = std::sync::mpsc::channel();
+		let alice_rtx = Some(tx);
+		let (mut alice_ni_tx, alice_ni_rx) = channel(1);
+
+		let mut alice_rg = RandomnessGossip::new(
+			threshold,
+			alice_ni_rx,
+			network.clone(),
+			alice_rtx,
+			dkg_api.clone(),
+			0,
+		);
+
+		let (tx, bob_rrx) = std::sync::mpsc::channel();
+		let bob_rtx = Some(tx);
+		let (mut bob_ni_tx, bob_ni_rx) = channel(1);
+
+		let mut bob_rg =
+			RandomnessGossip::new(threshold, bob_ni_rx, network.clone(), bob_rtx, dkg_api, 0);
+
+		let ni = NonceInfo {
+			nonce: Hash::default(),
+			height: BlockNumber::default(),
+		};
+
+		assert!(alice_ni_tx.try_send(ni.clone()).is_ok());
+		assert!(bob_ni_tx.try_send(ni.clone()).is_ok());
+
+		futures::executor::block_on(futures::future::poll_fn(|cx| {
+			for _ in 0..10 {
+				let res = alice_rg.poll_unpin(cx);
+				if let Poll::Ready(()) = res {
+					unreachable!("As long as network is alive, RandomnessGossip should go on.");
+				}
+				let res = bob_rg.poll_unpin(cx);
+				if let Poll::Ready(()) = res {
+					unreachable!("As long as network is alive, RandomnessGossip should go on.");
+				}
+			}
+			Poll::Ready(())
+		}));
+		assert!(alice_rg.topics.contains_key(&ni.nonce));
+		assert!(bob_rg.topics.contains_key(&ni.nonce));
+		assert!(alice_rrx.recv().is_ok());
+		assert!(bob_rrx.recv().is_ok());
 		server.close();
 	}
 }
