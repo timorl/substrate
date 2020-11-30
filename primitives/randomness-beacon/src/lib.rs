@@ -54,6 +54,12 @@ pub struct RandomnessShare<Nonce: Encode + Decode> {
 	share: Share,
 }
 
+impl<Nonce: Encode + Decode> PartialEq<RandomnessShare<Nonce>> for RandomnessShare<Nonce> {
+	fn eq(&self, rhs: &RandomnessShare<Nonce>) -> bool {
+		self.share == rhs.share
+	}
+}
+
 pub struct RBBox<Nonce> {
 	keybox: KeyBox,
 	_marker: marker::PhantomData<Nonce>,

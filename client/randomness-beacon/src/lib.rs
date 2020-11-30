@@ -412,32 +412,40 @@ where
 				}
 			}
 
-			let poll = incoming.poll_next_unpin(cx);
-			match poll {
-				Poll::Ready(Some(notification)) => {
-					let GossipMessage::<B> { message, .. } =
-						GossipMessage::<B>::decode(&mut &notification.message[..]).unwrap();
-					let share = RandomnessShare::decode(&mut &*message.share).unwrap();
-					if shares.len() < threshold && rbbox.verify_randomness_share(&share) {
-						shares.push(share);
+			if shares.len() < threshold {
+				let poll = incoming.poll_next_unpin(cx);
+				match poll {
+					Poll::Ready(Some(notification)) => {
+						let GossipMessage::<B> { message, .. } =
+							GossipMessage::<B>::decode(&mut &notification.message[..]).unwrap();
+						let share = RandomnessShare::decode(&mut &*message.share).unwrap();
+						if rbbox.verify_randomness_share(&share) {
+							shares.push(share);
+						}
 					}
+					Poll::Ready(None) => info!(
+						target: RB_PROTOCOL_NAME,
+						"poll_next_unpin returned Ready(None) ==> investigate!"
+					),
+					Poll::Pending => {}
 				}
-				Poll::Ready(None) => info!(
-					target: RB_PROTOCOL_NAME,
-					"poll_next_unpin returned Ready(None) ==> investigate!"
-				),
-				Poll::Pending => {}
-			}
 
-			if shares.len() == threshold {
-				let randomness = rbbox.combine_shares(shares);
+				if shares.len() == threshold {
+					assert!(shares
+						.iter()
+						.take(shares.len() - 1)
+						.enumerate()
+						.all(|(i, s)| !shares[i + 1..].contains(s)));
 
-				// When randomness succesfully combined, notify block proposer
-				if let Some(ref randomness_tx) = randomness_tx {
-					assert!(
-						randomness_tx.send(randomness).is_ok(),
-						"problem with sending new randomness to the block proposer"
-					);
+					let randomness = rbbox.combine_shares(shares);
+
+					// When randomness succesfully combined, notify block proposer
+					if let Some(ref randomness_tx) = randomness_tx {
+						assert!(
+							randomness_tx.send(randomness).is_ok(),
+							"problem with sending new randomness to the block proposer"
+						);
+					}
 				}
 			}
 		}
