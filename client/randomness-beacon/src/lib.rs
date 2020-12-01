@@ -21,7 +21,7 @@ use sc_network_gossip::{
 use sp_runtime::{generic::BlockId, traits::Block as BlockT, traits::NumberFor};
 
 use sp_dkg::DKGApi;
-use sp_randomness_beacon::{RBBox, Randomness, RandomnessShare};
+use sp_randomness_beacon::{RBBox, Randomness, RandomnessShare, RandomnessBeaconApi};
 
 use futures::{channel::mpsc::Receiver, prelude::*};
 use parking_lot::Mutex;
@@ -176,7 +176,7 @@ pub struct RandomnessGossip<B: BlockT, C> {
 	gossip_engine: Arc<Mutex<GossipEngine<B>>>,
 	randomness_nonce_rx: Receiver<NonceInfo<B>>,
 	randomness_tx: Option<Sender<Randomness<Nonce<B>>>>,
-	dkg_api: Arc<C>,
+	runtime_api: Arc<C>,
 	http_rpc_port: u16,
 }
 
@@ -186,14 +186,14 @@ impl<B: BlockT, C> Unpin for RandomnessGossip<B, C> {}
 impl<B: BlockT, C> RandomnessGossip<B, C>
 where
 	C: sp_api::ProvideRuntimeApi<B>,
-	C::Api: DKGApi<B>,
+	C::Api: DKGApi<B> + RandomnessBeaconApi<B>,
 {
 	pub fn new<N: Network<B> + Send + Clone + 'static>(
 		threshold: u64,
 		randomness_nonce_rx: Receiver<NonceInfo<B>>,
 		network: N,
 		randomness_tx: Option<Sender<Randomness<Nonce<B>>>>,
-		dkg_api: Arc<C>,
+		runtime_api: Arc<C>,
 		http_rpc_port: u16,
 	) -> Self {
 		let gossip_engine = Arc::new(Mutex::new(GossipEngine::new(
@@ -210,7 +210,7 @@ where
 			gossip_engine,
 			randomness_nonce_rx,
 			randomness_tx,
-			dkg_api,
+			runtime_api,
 			http_rpc_port,
 		}
 	}
@@ -291,22 +291,35 @@ where
 		let block_hash = nonce_info.nonce().clone();
 		let block_height = nonce_info.height();
 
-		let height_master_ready = match self
-			.dkg_api
+		let beacon_start = match self
+			.runtime_api
 			.runtime_api()
-			.master_key_ready(&BlockId::Hash(block_hash))
+			.start_beacon_height(&BlockId::Hash(block_hash))
 		{
 			Ok(height) => height,
 			_ => return None,
 		};
 
-		if height_master_ready > *block_height {
+		let beacon_period = match self
+			.runtime_api
+			.runtime_api()
+			.beacon_period(&BlockId::Hash(block_hash))
+		{
+			Ok(height) => height,
+			_ => return None,
+		};
+
+		if *block_height < beacon_start {
 			// the keys are not ready yet
 			return None;
 		}
 
+		if (*block_height - beacon_start) % beacon_period != 0.into() {
+			return None;
+		}
+
 		let (ix, verification_keys, master_key, t) = match self
-			.dkg_api
+			.runtime_api
 			.runtime_api()
 			.public_keybox_parts(&BlockId::Hash(block_hash))
 		{
@@ -317,7 +330,7 @@ where
 		let tx = Mutex::new(tx);
 
 		let storage_key = match self
-			.dkg_api
+			.runtime_api
 			.runtime_api()
 			.storage_key_sk(&BlockId::Hash(block_hash))
 		{
@@ -354,7 +367,7 @@ where
 impl<B: BlockT, C> Future for RandomnessGossip<B, C>
 where
 	C: sp_api::ProvideRuntimeApi<B>,
-	C::Api: DKGApi<B>,
+	C::Api: DKGApi<B> + RandomnessBeaconApi<B>,
 {
 	type Output = ();
 
@@ -543,6 +556,8 @@ mod tests {
 		verification_keys: Option<Vec<VerifyKey>>,
 		public_keybox_parts: Option<(Option<AuthIndex>, Vec<VerifyKey>, VerifyKey, u64)>,
 		storage_key_sk: Option<Vec<u8>>,
+		beacon_start: NumberFor<Block>,
+		beacon_period: NumberFor<Block>,
 	}
 
 	impl TestApi {
@@ -554,6 +569,8 @@ mod tests {
 			verification_keys: Option<Vec<VerifyKey>>,
 			public_keybox_parts: Option<(Option<AuthIndex>, Vec<VerifyKey>, VerifyKey, u64)>,
 			storage_key_sk: Option<Vec<u8>>,
+			beacon_start: NumberFor<Block>,
+			beacon_period: NumberFor<Block>,
 		) -> Self {
 			TestApi {
 				master_verification_key,
@@ -563,6 +580,8 @@ mod tests {
 				verification_keys,
 				public_keybox_parts,
 				storage_key_sk,
+				beacon_start,
+				beacon_period,
 			}
 		}
 	}
@@ -613,6 +632,16 @@ mod tests {
 				self.inner.storage_key_sk.clone()
 			}
 		}
+
+		impl RandomnessBeaconApi<Block> for RuntimeApi {
+			fn start_beacon_height(&self) -> NumberFor<Block> {
+				self.inner.beacon_start.clone()
+			}
+
+			fn beacon_period(&self) -> NumberFor<Block> {
+				self.inner.beacon_period.clone()
+			}
+		}
 	}
 
 	#[test]
@@ -631,7 +660,7 @@ mod tests {
 			threshold,
 		));
 		let storage_key_sk = Some(KEY.to_vec());
-		let dkg_api = Arc::new(TestApi::new(
+		let runtime_api = Arc::new(TestApi::new(
 			None,
 			0,
 			threshold,
@@ -639,11 +668,13 @@ mod tests {
 			None,
 			public_keybox_parts,
 			storage_key_sk,
+			0,
+			1,
 		));
 		let network = TestNetwork::default();
 
 		let mut alice_rg =
-			RandomnessGossip::new(threshold, ni_rx, network.clone(), randomness_tx, dkg_api, 0);
+			RandomnessGossip::new(threshold, ni_rx, network.clone(), randomness_tx, runtime_api, 0);
 
 		let ni = NonceInfo {
 			nonce: Hash::default(),
@@ -680,7 +711,7 @@ mod tests {
 			threshold,
 		));
 		let storage_key_sk = Some(KEY.to_vec());
-		let dkg_api = Arc::new(TestApi::new(
+		let runtime_api = Arc::new(TestApi::new(
 			Some(VerifyKey::default()),
 			0,
 			threshold,
@@ -688,6 +719,8 @@ mod tests {
 			None,
 			public_keybox_parts,
 			storage_key_sk,
+			0,
+			1,
 		));
 
 		let (tx, alice_rrx) = std::sync::mpsc::channel();
@@ -699,7 +732,7 @@ mod tests {
 			alice_ni_rx,
 			network.clone(),
 			alice_rtx,
-			dkg_api.clone(),
+			runtime_api.clone(),
 			0,
 		);
 
@@ -708,7 +741,7 @@ mod tests {
 		let (mut bob_ni_tx, bob_ni_rx) = channel(1);
 
 		let mut bob_rg =
-			RandomnessGossip::new(threshold, bob_ni_rx, network.clone(), bob_rtx, dkg_api, 0);
+			RandomnessGossip::new(threshold, bob_ni_rx, network.clone(), bob_rtx, runtime_api, 0);
 
 		let ni = NonceInfo {
 			nonce: Hash::default(),

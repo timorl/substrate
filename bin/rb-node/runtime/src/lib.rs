@@ -272,6 +272,7 @@ impl pallet_sudo::Trait for Runtime {
 const ROUNDS_ENDS: [u32; 4] = [2, 4, 6, 8];
 const MASTER_KEY_READY: u32 = 10;
 const START_HEIGHT: u32 = 11;
+const RANDOMNESS_PERIOD: u32 = 2;
 
 parameter_types! {
 	pub const RoundEnds: [u32; 4] = ROUNDS_ENDS;
@@ -287,6 +288,7 @@ impl pallet_dkg::Trait for Runtime {
 
 parameter_types! {
 	pub const StartHeight: u32 = START_HEIGHT;
+	pub const RandomnessPeriod: u32 = RANDOMNESS_PERIOD;
 }
 
 use sp_randomness_beacon::RandomnessVerifier;
@@ -306,6 +308,7 @@ impl pallet_randomness_beacon::Trait for Runtime {
 	type StartHeight = StartHeight;
 	type RandomnessVerifierReady = MasterKeyReady;
 	type RandomnessVerifier = GetRandomnessVerifier;
+	type RandomnessPeriod = RandomnessPeriod;
 }
 
 impl<LocalCall> frame_system::offchain::CreateSignedTransaction<LocalCall> for Runtime
@@ -539,6 +542,9 @@ impl_runtime_apis! {
 	impl sp_randomness_beacon::RandomnessBeaconApi<Block> for Runtime {
 		fn start_beacon_height() -> NumberFor<Block> {
 			RandomnessBeacon::start_beacon_height()
+		}
+		fn beacon_period() -> NumberFor<Block> {
+			RandomnessBeacon::beacon_period()
 		}
 	}
 

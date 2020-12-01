@@ -30,7 +30,7 @@
 
 use codec::Encode;
 use frame_support::{
-	decl_error, decl_module, decl_storage, traits::Get, traits::Randomness as RandomnessT,
+	debug, decl_error, decl_module, decl_storage, traits::Get, traits::Randomness as RandomnessT,
 	weights::Weight,
 };
 use frame_system::ensure_none;
@@ -45,6 +45,7 @@ use sp_std::result;
 
 pub trait Trait: frame_system::Trait {
 	type StartHeight: Get<Self::BlockNumber>;
+	type RandomnessPeriod: Get<Self::BlockNumber>;
 	type RandomnessVerifierReady: Get<Self::BlockNumber>;
 	type RandomnessVerifier: Get<Option<RandomnessVerifier>>;
 }
@@ -54,7 +55,7 @@ decl_storage! {
 		/// Random Bytes for the current block
 		Seed: Randomness<T::Hash>;
 		/// Was Seed set in this block?
-		DidUpdate: bool;
+		LastUpdate: T::BlockNumber;
 		// Stores verifier needed to check randomness in blocks
 		Verifier get(fn verifier): RandomnessVerifier
 	}
@@ -83,17 +84,39 @@ decl_module! {
 		fn set_random_bytes(origin, randomness: Randomness<T::Hash>)  {
 			ensure_none(origin)?;
 
-			assert!(Self::verifier().verify(&randomness), "Failed to verify randomness");
+			let now = <frame_system::Module<T>>::block_number();
+			if now <= T::StartHeight::get() {
+				//StartHeight is the first nonce, the first randomness is included in StartHeight + RandomnessPeriod
+				return Ok(());
+			}
+			if (now - T::StartHeight::get()) % T::RandomnessPeriod::get() != 0.into() {
+				//randomness should be included in StartHeight + k*RandomnessPeriod for k=1, 2, 3, ...
+				return Ok(());
+			}
 
-			assert!(!DidUpdate::exists(), "Randomness must be set only once in the block");
+			let expected_nonce = <frame_system::Module<T>>::block_hash(now - T::RandomnessPeriod::get());
+			if randomness.nonce() != expected_nonce {
+				debug::info!("Wrong nonce in set_random_bytes, expected: {:?}, got {:?}.", expected_nonce, randomness.nonce());
+				return Ok(());
+			}
+			if !Self::verifier().verify(&randomness) {
+				debug::info!("Randomness verification failed in set_random_bytes at block {:?}.", now);
+				return Ok(());
+			}
 
 			<Self as Store>::Seed::put(randomness);
-			DidUpdate::put(true);
+			<Self as Store>::LastUpdate::put(now);
 		}
 
 		fn on_finalize(bn: T::BlockNumber) {
-			if bn >= T::StartHeight::get().into() {
-				assert!(DidUpdate::take(), "Randomness must be put into the block");
+			if bn > T::StartHeight::get() {
+				if (bn - T::StartHeight::get()) % T::RandomnessPeriod::get() == 0.into() {
+					let last_update = <Self as Store>::LastUpdate::try_get();
+					assert!(last_update == Ok(bn), "Problem with randomness in on_finalize, last_update: {:?}, block: {:?}",
+						last_update,
+						bn
+					);
+				}
 			}
 		}
 	}
@@ -102,6 +125,10 @@ decl_module! {
 impl<T: Trait> Module<T> {
 	pub fn start_beacon_height() -> T::BlockNumber {
 		T::StartHeight::get()
+	}
+
+	pub fn beacon_period() -> T::BlockNumber {
+		T::RandomnessPeriod::get()
 	}
 
 	fn set_master_key() -> bool {
@@ -140,10 +167,12 @@ impl<T: Trait> ProvideInherent for Module<T> {
 	/// for the current block. This seed is provided to the pallet via inherent data.
 	fn create_inherent(data: &InherentData) -> Option<Self::Call> {
 		let now = <frame_system::Module<T>>::block_number();
-		if now >= T::StartHeight::get() {
-			return Some(Self::Call::set_random_bytes(extract_random_bytes::<T>(
-				data,
-			)));
+		if now > T::StartHeight::get() {
+			if (now - T::StartHeight::get()) % T::RandomnessPeriod::get() == 0.into() {
+				debug::info!("Extracting random bytes in block {:?}.", now);
+				return Some(Self::Call::set_random_bytes(extract_random_bytes::<T>(data)));
+			}
+
 		}
 		None
 	}
@@ -153,7 +182,10 @@ impl<T: Trait> ProvideInherent for Module<T> {
 	fn check_inherent(call: &Self::Call, _: &InherentData) -> result::Result<(), Self::Error> {
 		let now = <frame_system::Module<T>>::block_number();
 
-		if now < T::StartHeight::get() {
+		if now <= T::StartHeight::get() {
+			return Ok(());
+		}
+		if (now - T::StartHeight::get()) % T::RandomnessPeriod::get() == 0.into() {
 			return Ok(());
 		}
 

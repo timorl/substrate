@@ -11,9 +11,10 @@ use sp_std::marker;
 use sp_std::vec::Vec;
 
 sp_api::decl_runtime_apis! {
-	   pub trait RandomnessBeaconApi {
-			   fn start_beacon_height() -> NumberFor<Block> ;
-	   }
+	pub trait RandomnessBeaconApi {
+		fn start_beacon_height() -> NumberFor<Block>;
+		fn beacon_period() -> NumberFor<Block>;
+	}
 }
 
 #[derive(Encode, Decode, Clone, Debug, Default, PartialEq)]

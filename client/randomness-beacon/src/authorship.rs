@@ -24,6 +24,7 @@ use futures::{
 use sc_block_builder::{BlockBuilderApi, BlockBuilderProvider};
 use sp_consensus::{Proposal, RecordProof};
 use sp_inherents::InherentData;
+use sp_runtime::generic::BlockId;
 use sp_runtime::traits::{Block as BlockT, DigestFor, Header as HeaderT, NumberFor};
 
 use prometheus_endpoint::Registry as PrometheusRegistry;
@@ -38,10 +39,13 @@ pub struct ProposerFactory<A, B, Block: BlockT, C> {
 	inner: sc_basic_authorship::ProposerFactory<A, B, C>,
 	/// Randomness Beacon starting height.
 	start_beacon_height: NumberFor<Block>,
+	/// Randomness Beacon period.
+	beacon_period: NumberFor<Block>,
 	/// Receiver of new randomness.
 	randomness_rx: Arc<Mutex<Receiver<Randomness<Nonce<Block>>>>>,
 	/// The set of available random bytes.
 	available_randomness: Arc<Mutex<HashMap<Nonce<Block>, Randomness<Nonce<Block>>>>>,
+	client: Arc<C>,
 }
 
 impl<A, B, Block: BlockT, C> ProposerFactory<A, B, Block, C> {
@@ -51,6 +55,7 @@ impl<A, B, Block: BlockT, C> ProposerFactory<A, B, Block, C> {
 		transaction_pool: Arc<A>,
 		prometheus: Option<&PrometheusRegistry>,
 		start_beacon_height: NumberFor<Block>,
+		beacon_period: NumberFor<Block>,
 		randomness_rx: Arc<Mutex<Receiver<Randomness<Nonce<Block>>>>>,
 	) -> Self {
 		ProposerFactory {
@@ -61,8 +66,10 @@ impl<A, B, Block: BlockT, C> ProposerFactory<A, B, Block, C> {
 				prometheus,
 			),
 			start_beacon_height,
+			beacon_period,
 			randomness_rx,
 			available_randomness: Arc::new(Mutex::new(HashMap::new())),
+			client: client.clone(),
 		}
 	}
 }
@@ -86,11 +93,22 @@ where
 	type Error = sp_blockchain::Error;
 
 	fn init(&mut self, parent_header: &<Block as BlockT>::Header) -> Self::CreateProposer {
-		let parent_number = *parent_header.number();
+		let now = *parent_header.number() + 1.into();
 		let mut proposer_nonce = None;
-		if parent_number + 1.into() >= self.start_beacon_height {
-			proposer_nonce = Some(parent_header.hash());
+		info!("Init now {:?} b_h {:?} b_p {:?}", now, self.start_beacon_height, self.beacon_period);
+		if now > self.start_beacon_height {
+			if (now - self.start_beacon_height) % self.beacon_period == 0.into() {
+				let target_height = now - self.beacon_period;
+				let mut current_hash = parent_header.hash();
+				let mut current_height = now - 1.into();
+				while current_height > target_height {
+					current_hash = self.client.header(BlockId::Hash(current_hash)).unwrap().unwrap().parent_hash().clone();
+					current_height = current_height - 1.into();
+				}
+				proposer_nonce = Some(current_hash);
+			}
 		}
+		info!("Init nonce {:?}", proposer_nonce);
 		future::ready(Ok(Proposer {
 			inner: self
 				.inner
@@ -100,7 +118,11 @@ where
 			nonce: proposer_nonce,
 		}))
 	}
+
+
 }
+
+
 
 pub struct Proposer<B, Block: BlockT, C, A: TransactionPool> {
 	inner: sc_basic_authorship::Proposer<B, Block, C, A>,
@@ -198,7 +220,7 @@ where
 				}
 			},
 			None => {
-				info!("Block Number too low. Not including randomness in inherent_data.");
+				info!("Not including randomness in inherent_data.");
 			}
 		}
 
@@ -275,6 +297,7 @@ mod tests {
 			txpool.clone(),
 			None,
 			2u64,
+			1u64,
 			wrapped_rx,
 		);
 
@@ -321,6 +344,7 @@ mod tests {
 			txpool.clone(),
 			None,
 			2u64,
+			1u64,
 			wrapped_rx,
 		);
 
@@ -352,7 +376,7 @@ mod tests {
 	}
 
 	#[test]
-	fn fails_to_proposes_second_block_given_randomness_for_different_nonce() {
+	fn fails_to_propose_second_block_given_randomness_for_different_nonce() {
 		let mut client = Arc::new(substrate_test_runtime_client::new());
 		let spawner = sp_core::testing::TaskExecutor::new();
 		let txpool = BasicPool::new_full(Default::default(), None, spawner.clone(), client.clone());
@@ -381,6 +405,7 @@ mod tests {
 			txpool.clone(),
 			None,
 			2u64,
+			1u64,
 			wrapped_rx,
 		);
 

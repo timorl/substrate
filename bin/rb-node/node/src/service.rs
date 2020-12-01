@@ -30,15 +30,22 @@ type FullBackend = sc_service::TFullBackend<Block>;
 type FullSelectChain = sc_consensus::LongestChain<FullBackend, Block>;
 
 use sp_randomness_beacon::RandomnessBeaconApi;
-fn get_start_height<C>(client: Arc<C>) -> rb_node_runtime::BlockNumber
+fn get_rb_params<C>(client: Arc<C>) -> (rb_node_runtime::BlockNumber, rb_node_runtime::BlockNumber)
 where
 	C: sp_api::ProvideRuntimeApi<Block>,
 	C::Api: RandomnessBeaconApi<Block>,
 {
-	client
+	let height = client
 		.runtime_api()
 		.start_beacon_height(&BlockId::Number(0))
-		.unwrap()
+		.unwrap();
+
+	let period = client
+		.runtime_api()
+		.beacon_period(&BlockId::Number(0))
+		.unwrap();
+
+	(height, period)
 }
 
 use sp_dkg::DKGApi;
@@ -209,13 +216,14 @@ pub fn new_full(config: Configuration) -> Result<TaskManager, ServiceError> {
 		// the following var could be a plain randomness_notifier_rx if it implemented send Trait
 		// as it does not, then we pack it in Arc<Mutex<_>>
 		let randomness_rx = Arc::new(Mutex::new(randomness_rx));
-
+		let (beacon_start, beacoin_period) = get_rb_params(client.clone());
 		let proposer = sc_randomness_beacon::authorship::ProposerFactory::new(
 			task_manager.spawn_handle(),
 			client.clone(),
 			transaction_pool,
 			prometheus_registry.as_ref(),
-			get_start_height(client.clone()),
+			beacon_start,
+			beacoin_period,
 			randomness_rx,
 		);
 
