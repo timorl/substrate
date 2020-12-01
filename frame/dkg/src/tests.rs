@@ -239,7 +239,8 @@ fn derive_tsk(my_ix: usize) -> Scalar {
 fn test_handle_round3(states: &States, my_ix: usize) {
 	// do the round
 	DKG::handle_round3();
-	<DKG as OnFinalize<u64>>::on_finalize(RoundEnds::get()[2]);
+	let round2_end = DKG::round_end(2);
+	<DKG as OnFinalize<u64>>::on_finalize(round2_end);
 
 	// check if correct values was submitted on chain
 	let st_key = DKG::build_storage_key(b"threshold_secret_key", 3);
@@ -450,15 +451,13 @@ parameter_types! {
 }
 
 parameter_types! {
-	pub const RoundEnds: [u64; 4] = [2, 4, 6, 8];
-	pub const MasterKeyReady: u64 = 10;
+	pub const DKGReady: u64 = 10;
 }
 
 impl Trait for Runtime {
 	type Call = Call<Runtime>;
 	type AuthorityId = crypto::DKGId;
-	type RoundEnds = RoundEnds;
-	type MasterKeyReady = MasterKeyReady;
+	type DKGReady = DKGReady;
 }
 
 pub type DKG = Module<Runtime>;
