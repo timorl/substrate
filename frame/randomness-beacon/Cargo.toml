@@ -25,6 +25,7 @@ frame-system = { version = "2.0.0", default-features = false, path = "../system"
 sp-io ={ version = "2.0.0", path = "../../primitives/io" }
 sp-core= { version = "2.0.0", path = "../../primitives/core" }
 sp-runtime = { version = "2.0.0", path = "../../primitives/runtime" }
+sp-dkg= { version = "0.1.0", default-features = false, path = "../../primitives/dkg" }
 
 
 [features]

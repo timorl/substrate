@@ -4916,6 +4916,7 @@ dependencies = [
  "frame-system",
  "parity-scale-codec",
  "sp-core",
+ "sp-dkg",
  "sp-inherents",
  "sp-io",
  "sp-randomness-beacon",

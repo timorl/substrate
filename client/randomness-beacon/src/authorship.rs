@@ -95,7 +95,6 @@ where
 	fn init(&mut self, parent_header: &<Block as BlockT>::Header) -> Self::CreateProposer {
 		let now = *parent_header.number() + 1.into();
 		let mut proposer_nonce = None;
-		info!("Init now {:?} b_h {:?} b_p {:?}", now, self.start_beacon_height, self.beacon_period);
 		if now > self.start_beacon_height {
 			if (now - self.start_beacon_height) % self.beacon_period == 0.into() {
 				let target_height = now - self.beacon_period;
@@ -108,7 +107,6 @@ where
 				proposer_nonce = Some(current_hash);
 			}
 		}
-		info!("Init nonce {:?}", proposer_nonce);
 		future::ready(Ok(Proposer {
 			inner: self
 				.inner
@@ -343,7 +341,7 @@ mod tests {
 			client.clone(),
 			txpool.clone(),
 			None,
-			2u64,
+			1u64,
 			1u64,
 			wrapped_rx,
 		);
@@ -404,7 +402,7 @@ mod tests {
 			client.clone(),
 			txpool.clone(),
 			None,
-			2u64,
+			1u64,
 			1u64,
 			wrapped_rx,
 		);

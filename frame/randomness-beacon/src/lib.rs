@@ -19,12 +19,10 @@
 //! This pallet keeps in its store a randomness verifier that allows to verify whether
 //! a given seed is correct for a particular block or not. Internally, such a verifier
 //! keeps a joint public key for BLS threshold signatures.
-//! In every block of height >= `T::StartHeight::get()` there is an inherent which is
-//! supposed to contain the seed for the current block. Correctness of this seed
-//! is checked using the randomness verifier and the whole block is discarded as incorrect
-//! in case it outputs false.
-//! At the current stage, the randomness seed is kept in the Store as a Vec<u8> Seed.
-//! This is temporary and an appropriate API will be provided in the next milestone.
+//! In every block of height `s + p*k` for `k=1, 2, 3, ..` where s = StartHeight and
+//! p = RandomnessPeriod,  there is an inherent which is supposed to contain the seed for
+//! the current block. Correctness of this seed is checked using the randomness verifier
+//! and the whole block is discarded as incorrect in case it outputs false.
 
 #![cfg_attr(not(feature = "std"), no_std)]
 
@@ -40,6 +38,7 @@ use sp_randomness_beacon::{
 	Randomness, RandomnessVerifier,
 };
 use sp_runtime::traits::Hash;
+
 
 use sp_std::result;
 
@@ -85,24 +84,24 @@ decl_module! {
 			ensure_none(origin)?;
 
 			let now = <frame_system::Module<T>>::block_number();
-			if now <= T::StartHeight::get() {
-				//StartHeight is the first nonce, the first randomness is included in StartHeight + RandomnessPeriod
-				return Ok(());
-			}
-			if (now - T::StartHeight::get()) % T::RandomnessPeriod::get() != 0.into() {
-				//randomness should be included in StartHeight + k*RandomnessPeriod for k=1, 2, 3, ...
-				return Ok(());
-			}
+			assert!(now > T::StartHeight::get(), "Randomness beacon starts at height > {:?} but now is {:?}",
+				T::StartHeight::get(),
+				now
+			);
+			assert!((now -T::StartHeight::get())% T::RandomnessPeriod::get() == 0.into(),
+				"Wrong block number for randomness inclusion: {:?}", now);
+
+			let last_update = <Self as Store>::LastUpdate::try_get();
+			assert!(last_update != Ok(now), "Randomness must be set only once in the block");
+
 
 			let expected_nonce = <frame_system::Module<T>>::block_hash(now - T::RandomnessPeriod::get());
-			if randomness.nonce() != expected_nonce {
-				debug::info!("Wrong nonce in set_random_bytes, expected: {:?}, got {:?}.", expected_nonce, randomness.nonce());
-				return Ok(());
-			}
-			if !Self::verifier().verify(&randomness) {
-				debug::info!("Randomness verification failed in set_random_bytes at block {:?}.", now);
-				return Ok(());
-			}
+			assert!(randomness.nonce() == expected_nonce,"Wrong nonce in set_random_bytes, expected: {:?}, got {:?}.",
+				expected_nonce,
+				randomness.nonce()
+			);
+
+			assert!(Self::verifier().verify(&randomness), "Randomness verification failed in set_random_bytes at block {:?}.", now);
 
 			<Self as Store>::Seed::put(randomness);
 			<Self as Store>::LastUpdate::put(now);
@@ -112,8 +111,7 @@ decl_module! {
 			if bn > T::StartHeight::get() {
 				if (bn - T::StartHeight::get()) % T::RandomnessPeriod::get() == 0.into() {
 					let last_update = <Self as Store>::LastUpdate::try_get();
-					assert!(last_update == Ok(bn), "Problem with randomness in on_finalize, last_update: {:?}, block: {:?}",
-						last_update,
+					assert!(last_update == Ok(bn), "Randomness not set in block {:?}",
 						bn
 					);
 				}
@@ -225,6 +223,7 @@ mod tests {
 	use frame_support::traits::{Get, OnFinalize, OnInitialize};
 	use frame_support::{assert_ok, impl_outer_origin, parameter_types, weights::Weight};
 	use sp_core::H256;
+	use sp_dkg::{ShareProvider};
 	use sp_io::TestExternalities;
 	use sp_runtime::{
 		testing::Header,
@@ -283,7 +282,8 @@ mod tests {
 
 	parameter_types! {
 		pub const RandomnessVerifierReady: <Test as frame_system::Trait>::BlockNumber = 2;
-		pub const StartHeight: <Test as frame_system::Trait>::BlockNumber = 3;
+		pub const StartHeight: <Test as frame_system::Trait>::BlockNumber = 2;
+		pub const RandomnessPeriod: <Test as frame_system::Trait>::BlockNumber = 1;
 	}
 
 	pub struct GetRandomnessVerifier;
@@ -296,17 +296,35 @@ mod tests {
 		type StartHeight = StartHeight;
 		type RandomnessVerifier = GetRandomnessVerifier;
 		type RandomnessVerifierReady = RandomnessVerifierReady;
+		type RandomnessPeriod = RandomnessPeriod;
 	}
 
 	type RBeacon = Module<Test>;
-
+	pub type System = frame_system::Module<Test>;
 	#[test]
-	fn randomness_beacon_works() {
+	fn randomness_beacon_accepts_correct_randomness() {
 		new_test_ext().execute_with(|| {
 			assert_eq!(RBeacon::on_initialize(0), 0);
+			System::set_block_number(3);
 			assert_ok!(RBeacon::set_random_bytes(
 				Origin::none(),
 				Randomness::default()
+			));
+		});
+	}
+
+	#[test]
+	#[should_panic(expected = "Randomness verification failed in set_random_bytes at block 3.")]
+	fn randomness_beacon_rejects_wrong_randomness() {
+		new_test_ext().execute_with(|| {
+			assert_eq!(RBeacon::on_initialize(0), 0);
+			System::set_block_number(3);
+			let share_provider = ShareProvider::from_raw_secret(1, [1,7,2,9]);
+			let signature = share_provider.sign(&H256::default().encode());
+			let randomness = Randomness::<H256>::new(Default::default(), signature);
+			assert_ok!(RBeacon::set_random_bytes(
+				Origin::none(),
+				randomness
 			));
 		});
 	}
@@ -316,6 +334,7 @@ mod tests {
 	fn double_randomness_should_fail() {
 		new_test_ext().execute_with(|| {
 			assert_eq!(RBeacon::on_initialize(0), 0);
+			System::set_block_number(3);
 			assert_ok!(RBeacon::set_random_bytes(
 				Origin::none(),
 				Randomness::default()
@@ -333,9 +352,11 @@ mod tests {
 	}
 
 	#[test]
-	#[should_panic(expected = "Randomness must be put into the block")]
+	#[should_panic(expected = "Randomness not set in block 5")]
 	fn no_randomness_should_fail() {
 		new_test_ext().execute_with(|| {
+			assert_eq!(RBeacon::on_initialize(0), 0);
+			System::set_block_number(5);
 			assert_eq!(RBeacon::on_initialize(5), 0);
 			let _ = RBeacon::on_finalize(5);
 		});
