@@ -144,9 +144,7 @@ pub trait Trait: CreateSignedTransaction<Call<Self>> {
 
 	/// The overarching dispatch call type.
 	type Call: From<Call<Self>>;
-
-	type RoundEnds: Get<[Self::BlockNumber; 4]>;
-	type MasterKeyReady: Get<Self::BlockNumber>;
+	type DKGReady: Get<Self::BlockNumber>;
 }
 
 decl_storage! {
@@ -203,7 +201,7 @@ decl_module! {
 		#[weight = 1_000_000]
 		pub fn post_encryption_key(origin, pk: EncryptionPublicKey) {
 			let now = <frame_system::Module<T>>::block_number();
-			if !(now <= T::RoundEnds::get()[0]) {
+			if !(now <= Self::round_end(0)) {
 				return Ok(());
 			}
 
@@ -216,7 +214,7 @@ decl_module! {
 		#[weight = ((shares.len() + comm_poly.len()) as u64 + 1)*(1_000_000)]
 		pub fn post_secret_shares(origin, shares: Vec<Option<EncryptedShare>>, comm_poly: Vec<Commitment>, hash_round0: T::Hash) {
 			let now = <frame_system::Module<T>>::block_number();
-			if !(now > T::RoundEnds::get()[0] && now <= T::RoundEnds::get()[1]) {
+			if !(now > Self::round_end(0) && now <= Self::round_end(1)) {
 				debug::info!("Wrong block number for post_secret_shares: {:?}.", now);
 				return Ok(());
 			}
@@ -230,7 +228,7 @@ decl_module! {
 			let who = ensure_signed(origin)?;
 			if let Some(ix) = Self::authority_index(who){
 				if Self::encryption_pks()[ix as usize].is_some() {
-					let round0_number: T::BlockNumber = T::RoundEnds::get()[0];
+					let round0_number: T::BlockNumber = Self::round_end(0);
 					let correct_hash_round0 = <frame_system::Module<T>>::block_hash(round0_number);
 					if hash_round0 == correct_hash_round0 {
 						EncryptedSharesLists::mutate(|ref mut values| values[ix as usize] = shares);
@@ -249,14 +247,14 @@ decl_module! {
 		#[weight = (disputes.len() as u64 + 1)*(4_000_000)]
 		pub fn post_disputes(origin, disputes: Vec<(AuthIndex, EncryptionKey)>, hash_round1: T::Hash) {
 			let now = <frame_system::Module<T>>::block_number();
-			if !(now > T::RoundEnds::get()[1] && now <= T::RoundEnds::get()[2]) {
+			if !(now > Self::round_end(1) && now <= Self::round_end(2)) {
 				debug::info!("Wrong block number for post_disputes: {:?}.", now);
 				return Ok(());
 			}
 
 			let who = ensure_signed(origin)?;
 			if let Some(ix) = Self::authority_index(who){
-				let round1_number: T::BlockNumber = T::RoundEnds::get()[1];
+				let round1_number: T::BlockNumber = Self::round_end(1);
 				let correct_hash_round1 = <frame_system::Module<T>>::block_hash(round1_number);
 				if hash_round1 == correct_hash_round1 {
 					debug::info!("Considering {:?} disputes for {:?} in block {:?}", disputes.len(), ix, now);
@@ -296,7 +294,7 @@ decl_module! {
 		}
 
 		fn on_finalize(bn: T::BlockNumber) {
-			if bn != T::RoundEnds::get()[2] {
+			if bn != Self::round_end(2) {
 				return
 			}
 
@@ -331,13 +329,13 @@ decl_module! {
 				debug::info!("Offchain worker call at block {:?}.", block_number);
 				// At the end of Round 2, the public Keybox is ready
 				// Round 3 is only for the offchain worker to put the secret key in its storage.
-				if block_number < T::RoundEnds::get()[0]  {
+				if block_number < Self::round_end(0)  {
 						Self::handle_round0();
-				} else if block_number < T::RoundEnds::get()[1] {
+				} else if block_number < Self::round_end(1) {
 						Self::handle_round1();
-				} else if block_number < T::RoundEnds::get()[2] {
+				} else if block_number < Self::round_end(2) {
 						Self::handle_round2();
-				} else if block_number < T::RoundEnds::get()[3] {
+				} else if block_number < Self::round_end(3) {
 						Self::handle_round3();
 				}
 			} else {
@@ -368,6 +366,16 @@ impl<T: Trait> Module<T> {
 		}
 	}
 
+	fn round_end(round_number: usize) -> T::BlockNumber {
+		let mut rounds_left = T::DKGReady::get();
+		let mut r: usize = 3;
+		while round_number < r {
+			rounds_left -= rounds_left/((r+1) as u32).into();
+			r -= 1;
+		}
+		return rounds_left;
+	}
+
 	fn set_threshold(threshold: u64) {
 		let n_members = Self::authorities().len();
 		assert!(
@@ -383,7 +391,7 @@ impl<T: Trait> Module<T> {
 		let mut full_key = Vec::from("dkw::");
 		full_key.append(Vec::from(prefix).as_mut());
 		if round_number >= 1 {
-			let block_number = T::RoundEnds::get()[round_number - 1];
+			let block_number = Self::round_end(round_number - 1);
 			let mut hashb = <frame_system::Module<T>>::block_hash(block_number).encode();
 			full_key.append(&mut hashb);
 		}
@@ -475,7 +483,7 @@ impl<T: Trait> Module<T> {
 		}
 
 		// 4. send encrypted secret shares
-		let round0_number: T::BlockNumber = T::RoundEnds::get()[0];
+		let round0_number: T::BlockNumber = Self::round_end(0);
 		let hash_round0 = <frame_system::Module<T>>::block_hash(round0_number);
 		let signer =
 			Signer::<T, T::AuthorityId>::all_accounts().with_filter([auth.into()].to_vec());
@@ -556,7 +564,7 @@ impl<T: Trait> Module<T> {
 		}
 
 		// 3. send disputes
-		let round1_number: T::BlockNumber = T::RoundEnds::get()[1];
+		let round1_number: T::BlockNumber = Self::round_end(1);
 		let hash_round1 = <frame_system::Module<T>>::block_hash(round1_number);
 
 		let signer =
@@ -680,7 +688,7 @@ impl<T: Trait> Module<T> {
 
 	pub fn master_key_ready() -> T::BlockNumber {
 		// this is the round number when the outside world expects master key to be ready
-		T::MasterKeyReady::get()
+		T::DKGReady::get()
 	}
 
 	pub fn public_keybox_parts() -> Option<(Option<AuthIndex>, Vec<VerifyKey>, VerifyKey, u64)> {
@@ -703,7 +711,7 @@ impl<T: Trait> Module<T> {
 
 	pub fn storage_key_sk() -> Option<Vec<u8>> {
 		let now = <frame_system::Module<T>>::block_number();
-		let deadline_round_2 = T::RoundEnds::get()[2];
+		let deadline_round_2 = Self::round_end(2);
 		if now <= deadline_round_2 {
 			return None;
 		}

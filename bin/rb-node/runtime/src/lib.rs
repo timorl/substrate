@@ -265,25 +265,22 @@ impl pallet_sudo::Trait for Runtime {
 	type Call = Call;
 }
 
-// assume round legth = info propagation time to be 2 blocks
-// after 8th block an offchain worker is run that will submit master key
-// after 10th block the master key is in dkg pallet's storage so raw_key_box may be extracted and
-// RandomnessGossip may start collecting randomness shares for nonce=hash of block of number >= 11
-const ROUNDS_ENDS: [u32; 4] = [2, 4, 6, 8];
-const MASTER_KEY_READY: u32 = 10;
+// It *must* hold that DKG_READY < START_HEIGHT
+// The first nonce used by the Randomness Beacoin is the hash of the block number START_HEIGHT.
+// Randomness is included in blocks START_HEIGHT + K*RANDOMNESS_PERIOD, for K=1,2,3, ...
+// And the nonces for these are taken from START_HEIGHT + (K-1)*RANDOMNESS_PERIOD, for K=1,2,3, ...
+const DKG_READY: u32 = 10;
 const START_HEIGHT: u32 = 11;
 const RANDOMNESS_PERIOD: u32 = 2;
 
 parameter_types! {
-	pub const RoundEnds: [u32; 4] = ROUNDS_ENDS;
-	pub const MasterKeyReady: u32 = MASTER_KEY_READY;
+	pub const DKGReady: u32 = DKG_READY;
 }
 
 impl pallet_dkg::Trait for Runtime {
 	type Call = Call;
 	type AuthorityId = pallet_dkg::crypto::DKGId;
-	type RoundEnds = RoundEnds;
-	type MasterKeyReady = MasterKeyReady;
+	type DKGReady = DKGReady;
 }
 
 parameter_types! {
@@ -306,7 +303,7 @@ impl Get<Option<RandomnessVerifier>> for GetRandomnessVerifier {
 
 impl pallet_randomness_beacon::Trait for Runtime {
 	type StartHeight = StartHeight;
-	type RandomnessVerifierReady = MasterKeyReady;
+	type RandomnessVerifierReady = DKGReady;
 	type RandomnessVerifier = GetRandomnessVerifier;
 	type RandomnessPeriod = RandomnessPeriod;
 }
