@@ -57,5 +57,15 @@ pallet-transaction-payment-rpc = { version = "2.0.0", path = "../../../frame/tra
 
 rb-node-runtime = { version = "0.1.0", path = "../runtime" }
 
+# These dependencies are used for runtime benchmarking
+frame-benchmarking = { version = "2.0.0", path = "../../../frame/benchmarking" }
+frame-benchmarking-cli = { version = "2.0.0", path = "../../../utils/frame/benchmarking-cli" }
+
 [build-dependencies]
 substrate-build-script-utils = { version = "2.0.0", path = "../../../utils/build-script-utils" }
+
+[features]
+default = []
+runtime-benchmarks = [
+	"rb-node-runtime/runtime-benchmarks",
+]

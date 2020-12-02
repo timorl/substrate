@@ -39,7 +39,6 @@ use sp_randomness_beacon::{
 };
 use sp_runtime::traits::Hash;
 
-
 use sp_std::result;
 
 pub trait Trait: frame_system::Trait {
@@ -80,7 +79,7 @@ decl_module! {
 		}
 
 		#[weight = 10_000_000]
-		fn set_random_bytes(origin, randomness: Randomness<T::Hash>)  {
+		fn set_randomness(origin, randomness: Randomness<T::Hash>)  {
 			ensure_none(origin)?;
 
 			let now = <frame_system::Module<T>>::block_number();
@@ -96,12 +95,12 @@ decl_module! {
 
 
 			let expected_nonce = <frame_system::Module<T>>::block_hash(now - T::RandomnessPeriod::get());
-			assert!(randomness.nonce() == expected_nonce,"Wrong nonce in set_random_bytes, expected: {:?}, got {:?}.",
+			assert!(randomness.nonce() == expected_nonce,"Wrong nonce in set_randomness, expected: {:?}, got {:?}.",
 				expected_nonce,
 				randomness.nonce()
 			);
 
-			assert!(Self::verifier().verify(&randomness), "Randomness verification failed in set_random_bytes at block {:?}.", now);
+			assert!(Self::verifier().verify(&randomness), "Randomness verification failed in set_randomness at block {:?}.", now);
 
 			<Self as Store>::Seed::put(randomness);
 			<Self as Store>::LastUpdate::put(now);
@@ -168,9 +167,8 @@ impl<T: Trait> ProvideInherent for Module<T> {
 		if now > T::StartHeight::get() {
 			if (now - T::StartHeight::get()) % T::RandomnessPeriod::get() == 0.into() {
 				debug::info!("Extracting random bytes in block {:?}.", now);
-				return Some(Self::Call::set_random_bytes(extract_random_bytes::<T>(data)));
+				return Some(Self::Call::set_randomness(extract_random_bytes::<T>(data)));
 			}
-
 		}
 		None
 	}
@@ -191,7 +189,7 @@ impl<T: Trait> ProvideInherent for Module<T> {
 			return Err(sp_randomness_beacon::inherents::InherentError::VerifyKeyNotSet);
 		}
 		let randomness = match call {
-			Call::set_random_bytes(ref random_bytes) => random_bytes.clone(),
+			Call::set_randomness(ref random_bytes) => random_bytes.clone(),
 			_ => return Ok(()),
 		};
 		if !Self::verifier().verify(&randomness) {
@@ -217,13 +215,89 @@ impl<T: Trait> RandomnessT<T::Hash> for Module<T> {
 	}
 }
 
+#[cfg(feature = "runtime-benchmarks")]
+mod benchmarking {
+	use super::*;
+	use frame_benchmarking::{benchmarks, TrackedStorageKey};
+	use frame_support::{ensure, traits::OnFinalize};
+	use frame_system::RawOrigin;
+	use sp_randomness_beacon::{RBBox, Randomness, RandomnessVerifier, VerifyKey};
+	use sp_std::prelude::*;
+
+	use crate::Module as RandomnessBeacon;
+
+	fn gen_randomness<T: Trait>() -> Randomness<T::Hash> {
+		let ix = Some(0);
+		let secret = [1, 7, 2, 9];
+		let mvk = VerifyKey::from_raw_secret(secret);
+		let vks = vec![mvk.clone()];
+		let threshold = 1;
+
+		frame_system::Module::<T>::set_block_number(19.into());
+		let rbbox = RBBox::new(ix, Some(secret), vks, mvk.clone(), threshold);
+		let rv = RandomnessVerifier::new(mvk);
+		<RandomnessBeacon<T> as Store>::Verifier::put(rv);
+
+		let shares = vec![rbbox.generate_randomness_share(Default::default()).unwrap()];
+
+		rbbox.combine_shares(&shares)
+	}
+
+	benchmarks! {
+		_ { }
+
+		set_randomness {
+			let randomness = gen_randomness::<T>();
+
+			// Ignore write to `LastUpdate` since it transient.
+			let last_update_key = <RandomnessBeacon::<T> as Store>::LastUpdate::hashed_key().to_vec();
+			frame_benchmarking::benchmarking::add_to_whitelist(TrackedStorageKey {
+				key: last_update_key,
+				has_been_read: false,
+				has_been_written: true,
+			});
+		}: _(RawOrigin::None, randomness.clone())
+		verify {
+			ensure!(<RandomnessBeacon<T> as Store>::Seed::get() == randomness, "Seed was not set.");
+		}
+
+		on_finalize {
+			let randomness = gen_randomness::<T>();
+
+			RandomnessBeacon::<T>::set_randomness(RawOrigin::None.into(), randomness.clone())?;
+			ensure!(<RandomnessBeacon::<T> as Store>::LastUpdate::exists(), "Randomness was not set.");
+			// Ignore read/write to `LastUpdate` since it is transient.
+			let last_update_key = <RandomnessBeacon::<T> as Store>::LastUpdate::hashed_key().to_vec();
+			frame_benchmarking::benchmarking::add_to_whitelist(last_update_key.into());
+		}: { RandomnessBeacon::<T>::on_finalize(T::StartHeight::get().into()); }
+		verify {
+			ensure!(<RandomnessBeacon::<T> as Store>::LastUpdate::exists(), "Randomness was not set.");
+		}
+	}
+
+	#[cfg(test)]
+	mod tests {
+		use super::*;
+		use crate::tests::{new_test_ext, Test};
+		use frame_support::assert_ok;
+
+		#[test]
+		fn test_benchmarks() {
+			new_test_ext().execute_with(|| {
+				assert_ok!(test_benchmark_set_randomness::<Test>());
+				assert_ok!(test_benchmark_on_finalize::<Test>());
+			})
+		}
+	}
+}
+
 #[cfg(test)]
 mod tests {
 	use super::*;
 	use frame_support::traits::{Get, OnFinalize, OnInitialize};
 	use frame_support::{assert_ok, impl_outer_origin, parameter_types, weights::Weight};
 	use sp_core::H256;
-	use sp_dkg::{ShareProvider};
+	use sp_dkg::ShareProvider;
 	use sp_io::TestExternalities;
 	use sp_runtime::{
 		testing::Header,
@@ -306,7 +380,7 @@ mod tests {
 		new_test_ext().execute_with(|| {
 			assert_eq!(RBeacon::on_initialize(0), 0);
 			System::set_block_number(3);
-			assert_ok!(RBeacon::set_random_bytes(
+			assert_ok!(RBeacon::set_randomness(
 				Origin::none(),
 				Randomness::default()
 			));
@@ -314,18 +388,15 @@ mod tests {
 	}
 
 	#[test]
-	#[should_panic(expected = "Randomness verification failed in set_random_bytes at block 3.")]
+	#[should_panic(expected = "Randomness verification failed in set_randomness at block 3.")]
 	fn randomness_beacon_rejects_wrong_randomness() {
 		new_test_ext().execute_with(|| {
 			assert_eq!(RBeacon::on_initialize(0), 0);
 			System::set_block_number(3);
-			let share_provider = ShareProvider::from_raw_secret(1, [1,7,2,9]);
+			let share_provider = ShareProvider::from_raw_secret(1, [1, 7, 2, 9]);
 			let signature = share_provider.sign(&H256::default().encode());
 			let randomness = Randomness::<H256>::new(Default::default(), signature);
-			assert_ok!(RBeacon::set_random_bytes(
-				Origin::none(),
-				randomness
-			));
+			assert_ok!(RBeacon::set_randomness(Origin::none(), randomness));
 		});
 	}
 
@@ -335,11 +406,11 @@ mod tests {
 		new_test_ext().execute_with(|| {
 			assert_eq!(RBeacon::on_initialize(0), 0);
 			System::set_block_number(3);
-			assert_ok!(RBeacon::set_random_bytes(
+			assert_ok!(RBeacon::set_randomness(
 				Origin::none(),
 				Randomness::default()
 			));
-			let _ = RBeacon::set_random_bytes(Origin::none(), Randomness::default());
+			let _ = RBeacon::set_randomness(Origin::none(), Randomness::default());
 		});
 	}
 

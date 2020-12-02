@@ -23,6 +23,7 @@ native_executor_instance!(
 	pub Executor,
 	rb_node_runtime::api::dispatch,
 	rb_node_runtime::native_version,
+	frame_benchmarking::benchmarking::HostFunctions,
 );
 
 type FullClient = sc_service::TFullClient<Block, RuntimeApi, Executor>;

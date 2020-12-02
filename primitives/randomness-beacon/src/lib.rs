@@ -5,7 +5,8 @@
 pub mod inherents;
 
 use codec::{Decode, Encode};
-use sp_dkg::{KeyBox, RawSecret, Share, ShareProvider, Signature, VerifyKey};
+pub use sp_dkg::VerifyKey;
+use sp_dkg::{KeyBox, RawSecret, Share, ShareProvider, Signature};
 use sp_runtime::traits::NumberFor;
 use sp_std::marker;
 use sp_std::vec::Vec;

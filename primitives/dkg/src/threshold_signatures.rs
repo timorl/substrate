@@ -78,6 +78,11 @@ impl VerifyKey {
 			point: G2Affine::from(G2Affine::generator() * secret),
 		}
 	}
+
+	pub fn from_raw_secret(raw_secret: RawSecret) -> Self {
+		let secret = Scalar::from_raw(raw_secret);
+		Self::from_secret(&secret)
+	}
 }
 
 use super::RawSecret;
