@@ -26,6 +26,7 @@ sp-randomness-beacon= { version = "0.1.0", default-features = false, path = "../
 frame-support = { version = "2.0.0", default-features = false, path = "../support" }
 frame-system = { version = "2.0.0", default-features = false, path = "../system" }
 
+frame-benchmarking = { version = "2.0.0", default-features = false, path = "../benchmarking", optional = true }
 
 [dev-dependencies]
 parking_lot = "0.10.2"
@@ -48,3 +49,5 @@ std = [
 	"frame-system/std",
 	"sp-randomness-beacon/std",
 ]
+
+runtime-benchmarks = ["frame-benchmarking"]

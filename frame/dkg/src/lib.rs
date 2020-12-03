@@ -47,6 +47,7 @@ use sp_dkg::{
 	VerifyKey,
 };
 
+mod benchmarking;
 mod tests;
 
 // n is the number of nodes in the committee
@@ -138,6 +139,7 @@ pub trait Trait: CreateSignedTransaction<Call<Self>> {
 		+ Parameter
 		+ RuntimeAppPublic
 		+ AppCrypto<Self::Public, Self::Signature>
+		+ Default
 		+ Ord
 		+ From<Self::Public>
 		+ Into<Self::Public>;
@@ -370,7 +372,7 @@ impl<T: Trait> Module<T> {
 		let mut rounds_left = T::DKGReady::get();
 		let mut r: usize = 3;
 		while round_number < r {
-			rounds_left -= rounds_left/((r+1) as u32).into();
+			rounds_left -= rounds_left / ((r + 1) as u32).into();
 			r -= 1;
 		}
 		return rounds_left;

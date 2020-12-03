@@ -232,8 +232,10 @@ mod benchmarking {
 		let mvk = VerifyKey::from_raw_secret(secret);
 		let vks = vec![mvk.clone()];
 		let threshold = 1;
-
-		frame_system::Module::<T>::set_block_number(19.into());
+		let start = T::StartHeight::get();
+		let period = T::RandomnessPeriod::get();
+		let now = start + period;
+		frame_system::Module::<T>::set_block_number(now);
 		let rbbox = RBBox::new(ix, Some(secret), vks, mvk.clone(), threshold);
 		let rv = RandomnessVerifier::new(mvk);
 		<RandomnessBeacon<T> as Store>::Verifier::put(rv);
@@ -269,7 +271,7 @@ mod benchmarking {
 			// Ignore read/write to `LastUpdate` since it is transient.
 			let last_update_key = <RandomnessBeacon::<T> as Store>::LastUpdate::hashed_key().to_vec();
 			frame_benchmarking::benchmarking::add_to_whitelist(last_update_key.into());
-		}: { RandomnessBeacon::<T>::on_finalize(T::StartHeight::get().into()); }
+		}: { RandomnessBeacon::<T>::on_finalize(<frame_system::Module<T>>::block_number().into()); }
 		verify {
 			ensure!(<RandomnessBeacon::<T> as Store>::LastUpdate::exists(), "Randomness was not set.");
 		}

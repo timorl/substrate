@@ -26,9 +26,9 @@ const THRESHOLD: usize = 3;
 
 #[test]
 fn dkg() {
-	let (mut t, states, authorities) = new_test_ext();
+	let (mut t, states, my_id) = new_test_ext();
 	t.execute_with(|| {
-		let my_ix = init(authorities);
+		let my_ix = init(my_id, N_MEMBERS, THRESHOLD as u64);
 		test_handle_round0(&states, my_ix);
 		test_handle_round1(&states, my_ix);
 		test_handle_round2(&states);
@@ -38,12 +38,12 @@ fn dkg() {
 }
 
 #[derive(Clone)]
-struct States {
-	offchain: Arc<RwLock<OffchainState>>,
+pub(crate) struct States {
+	pub(crate) offchain: Arc<RwLock<OffchainState>>,
 	pool: Arc<RwLock<PoolState>>,
 }
 
-fn new_test_ext() -> (
+pub(crate) fn new_test_ext() -> (
 	sp_io::TestExternalities,
 	States,
 	sp_dkg::crypto::AuthorityId,
@@ -54,7 +54,7 @@ fn new_test_ext() -> (
 	let (offchain, offchain_state) = TestOffchainExt::new();
 	let (pool, pool_state) = TestTransactionPoolExt::new();
 	let keystore = KeyStore::new();
-	let my_id = SyncCryptoStore::sr25519_generate_new(
+	let my_id: sp_dkg::crypto::AuthorityId = SyncCryptoStore::sr25519_generate_new(
 		&keystore,
 		sp_dkg::crypto::AuthorityId::ID,
 		Some(&format!("{}/alice", PHRASE)),
@@ -74,15 +74,15 @@ fn new_test_ext() -> (
 	(ext, states, my_id)
 }
 
-fn init(my_id: sp_dkg::crypto::AuthorityId) -> usize {
-	let mut authorities = vec![crypto::DKGId::default(); N_MEMBERS];
+pub(crate) fn init(my_id: sp_dkg::crypto::AuthorityId, n_members: usize, threshold: u64) -> usize {
+	let mut authorities = vec![crypto::DKGId::default(); n_members];
 	authorities[0] = my_id.clone().into();
 	authorities.sort();
 
 	DKG::init_store(&authorities[..]);
 	assert_eq!(DKG::authorities()[..], authorities[..]);
-	DKG::set_threshold(THRESHOLD as u64);
-	assert_eq!(<DKG as Store>::Threshold::get(), THRESHOLD as u64);
+	DKG::set_threshold(threshold);
+	assert_eq!(<DKG as Store>::Threshold::get(), threshold);
 
 	authorities
 		.iter()
