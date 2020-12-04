@@ -96,4 +96,5 @@ runtime-benchmarks = [
 	"pallet-balances/runtime-benchmarks",
 	"pallet-timestamp/runtime-benchmarks",
 	"pallet-randomness-beacon/runtime-benchmarks",
+	"pallet-dkg/runtime-benchmarks",
 ]
