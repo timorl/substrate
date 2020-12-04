@@ -6,7 +6,8 @@ use frame_benchmarking::benchmarks;
 use frame_system::RawOrigin;
 
 use crate::Module as DKG;
-use sp_dkg::{Commitment, EncryptedShare, EncryptionPublicKey};
+use sp_dkg::{Commitment, EncryptedShare, EncryptionPublicKey, Scalar};
+use sp_std::prelude::*;
 
 benchmarks! {
 	_{ }
@@ -50,7 +51,7 @@ benchmarks! {
 		assert!(<DKG::<T> as Store>::Authorities::get().last().is_some());
 		let caller = <DKG::<T> as Store>::Authorities::get().last().unwrap().clone().into().into_account();
 
-		init::<T>(n as usize ,threshold as u64);
+		init::<T>(n as usize, threshold as u64);
 		<DKG::<T> as Store>::CommittedPolynomials::mutate(|ref mut values| values[n-1] = vec![]);
 		<DKG::<T> as Store>::EncryptedSharesLists::mutate(|ref mut values| values[n-1] = vec![None; n]);
 
@@ -70,6 +71,33 @@ benchmarks! {
 	verify {
 		assert_eq!(<DKG::<T> as Store>::CommittedPolynomials::get()[n-1].len(), threshold);
 		assert!(<DKG::<T> as Store>::EncryptedSharesLists::get()[n-1].iter().all(|es| es.is_some()));
+	}
+
+	post_disputes {
+		let n=10;
+		let n = n as usize;
+		let threshold = n/ 3 + 1;
+
+		assert!(<DKG::<T> as Store>::Authorities::get().last().is_some());
+		let caller = <DKG::<T> as Store>::Authorities::get().last().unwrap().clone().into().into_account();
+
+		init::<T>(n as usize, threshold as u64);
+
+		frame_system::Module::<T>::set_block_number(DKG::<T>::round_end(2));
+
+		let my_ix = n-1;
+		let bad_dealer = 0usize;
+		let my_secret_key = Scalar::from(n as u64 -1);
+		let enc_key = <DKG<T> as Store>::EncryptionPKs::get()[bad_dealer].as_ref().unwrap().to_encryption_key(my_secret_key);
+		let share = Scalar::from(1);
+		let enc_share = enc_key.encrypt(&share);
+		<DKG::<T> as Store>::EncryptedSharesLists::mutate(|ref mut values| values[bad_dealer][my_ix] = Some(enc_share));
+		assert_eq!(DKG::<T>::verify_share(&share, bad_dealer, my_ix as u64), false);
+		let disputes = vec![(bad_dealer as u64, enc_key)];
+		let hash_round1 = T::Hash::default();
+	}: _(RawOrigin::Signed(caller), disputes, hash_round1)
+	verify {
+		assert_eq!(<DKG::<T> as Store>::IsCorrectDealer::get()[bad_dealer], false);
 	}
 
 }
@@ -130,6 +158,9 @@ mod tests {
 
 			let _ = init(my_id.clone(), 1, 1);
 			assert_ok!(test_benchmark_post_secret_shares::<Runtime>());
+
+			let _ = init(my_id.clone(), 1, 1);
+			assert_ok!(test_benchmark_post_disputes::<Runtime>());
 		});
 	}
 }
