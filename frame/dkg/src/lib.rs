@@ -154,25 +154,22 @@ decl_storage! {
 
 		// round 0
 
-		// EncryptionPKs: Vec<Option<EncryptionPubKey>>;
-		EncryptionPKs get(fn encryption_pks): Vec<Option<EncryptionPublicKey>>;
+		EncryptionPKs: map hasher(twox_64_concat) u64 => EncryptionPublicKey;
 
 
 		// round 1
 
-		// ith entry is the CommitedPoly of (i+1)th node submitted in a tx in round 1
-		// CommittedPolynomials: Vec<Option<CommittedPoly>>;
-		CommittedPolynomials get(fn committed_polynomials): Vec<Vec<Commitment>>;
-		// ith entry is the EncShareList of (i+1)th node submitted in a tx in round 1
-		// EncryptedSharesLists: Vec<Option<EncShareList>>;
-		EncryptedSharesLists get(fn encrypted_shares_lists): Vec<Vec<Option<EncryptedShare>>>;
+		// ith entry is the CommitedPoly of ith node submitted in a tx in round 1
+		CommittedPolynomials: map hasher(twox_64_concat) u64 => Vec<Commitment>;
+		// (i,j) th entry is the share i dealt for j node in round 1
+		EncryptedShares: map hasher(twox_64_concat) (u64, u64) => EncryptedShare;
 
 
 		// round 2
-		// list of n bools: ith is true <=> both the below conditions are satisfied:
-		// 1) (i+1)th node succesfully participated in round 0 and round 1
-		// 2) there was no succesful dispute that proves cheating of (i+1)th node in round 2
-		IsCorrectDealer get(fn is_correct_creator): Vec<bool>;
+		// map of n bools: ith is true <=> both the below conditions are satisfied:
+		// 1) ith node succesfully participated in round 0 and round 1
+		// 2) there was no succesful dispute that proves cheating of ith node in round 2
+		IsCorrectDealer: map hasher(twox_64_concat) u64 => bool = false;
 
 
 		// round 3
@@ -209,7 +206,7 @@ decl_module! {
 
 			let who = ensure_signed(origin)?;
 			if let Some(ix) = Self::authority_index(who){
-				EncryptionPKs::mutate(|ref mut values| values[ix as usize] = Some(pk));
+				EncryptionPKs::insert(ix, pk);
 			}
 		}
 
@@ -229,13 +226,17 @@ decl_module! {
 
 			let who = ensure_signed(origin)?;
 			if let Some(ix) = Self::authority_index(who){
-				if Self::encryption_pks()[ix as usize].is_some() {
+				if EncryptionPKs::contains_key(ix) {
 					let round0_number: T::BlockNumber = Self::round_end(0);
 					let correct_hash_round0 = <frame_system::Module<T>>::block_hash(round0_number);
 					if hash_round0 == correct_hash_round0 {
-						EncryptedSharesLists::mutate(|ref mut values| values[ix as usize] = shares);
-						CommittedPolynomials::mutate(|ref mut values| values[ix as usize] = comm_poly);
-						IsCorrectDealer::mutate(|ref mut values| values[ix as usize] = true);
+						for (share_ix, share) in shares.iter().enumerate() {
+							if share.is_some() {
+								EncryptedShares::insert((ix, share_ix as u64), share.unwrap());
+							}
+						}
+						CommittedPolynomials::insert(ix, comm_poly);
+						IsCorrectDealer::insert(ix, true);
 						debug::info!("Successfully executed post_secret_shares for id {:?} in block {:?}.", ix, now);
 					} else {
 						debug::info!("Wrong hash_round0 value for post_secret_shares.");
@@ -260,35 +261,33 @@ decl_module! {
 				let correct_hash_round1 = <frame_system::Module<T>>::block_hash(round1_number);
 				if hash_round1 == correct_hash_round1 {
 					debug::info!("Considering {:?} disputes for {:?} in block {:?}", disputes.len(), ix, now);
-					IsCorrectDealer::mutate(|ref mut values|
-						disputes.into_iter().for_each(|(creator, ek)| {
-							if values[creator as usize] == false {
-								// No need to consider this dispute, the creator is already marked as incorrect.
-								return
-							}
-							if !Self::check_encryption_key(&ek, creator as usize, ix as usize) {
-								// there are 3 possible situations when this if fires, in all cases we can ignore this dispute
-								// if ek is wrong then this dispute is unfounded
-								// if creator's encryption key is None then he is marked as incorrect anyway
-								// if ix's encryption key is None then this dispute is unfounded
-								return
-							}
-							// The below line is fine since encrypted_shares_lists is initialized as a square
-							// array with all Nones.
-							let encrypted_share = Self::encrypted_shares_lists()[creator as usize][ix as usize];
-							if encrypted_share.is_none() {
-								values[creator as usize] = false;
-								return
-							}
-							let encrypted_share = &Self::encrypted_shares_lists()[creator as usize][ix as usize]
-								.clone()
-								.unwrap();
-							let share = ek.decrypt(&encrypted_share);
-							if share.is_none() || !Self::verify_share(&share.unwrap(), creator as usize, ix) {
-								values[creator as usize] = false;
-							}
-						})
-					);
+
+					disputes.into_iter().for_each(|(creator, ek)| {
+						if IsCorrectDealer::get(creator) == false {
+							// No need to consider this dispute, the creator is already marked as incorrect.
+							return
+						}
+						if !Self::check_encryption_key(&ek, creator as usize, ix as usize) {
+							// there are 3 possible situations when this if fires, in all cases we can ignore this dispute
+							// if ek is wrong then this dispute is unfounded
+							// if creator's encryption key is None then he is marked as incorrect anyway
+							// if ix's encryption key is None then this dispute is unfounded
+							return
+						}
+						// The below line is fine since encrypted_shares_lists is initialized as a square
+						// array with all Nones.
+
+						if !EncryptedShares::contains_key((creator, ix)) {
+							IsCorrectDealer::insert(creator, false);
+							return
+						}
+						let encrypted_share = &EncryptedShares::get((creator, ix)).clone();
+
+						let share = ek.decrypt(&encrypted_share);
+						if share.is_none() || !Self::verify_share(&share.unwrap(), creator as usize, ix) {
+							IsCorrectDealer::insert(creator, false);
+						}
+					});
 				} else {
 					debug::info!("Wrong hash_round0 value for post_disputes.");
 				}
@@ -300,26 +299,28 @@ decl_module! {
 				return
 			}
 
-			let qualified = Self::is_correct_creator();
-			let comms = Self::committed_polynomials()
-				.into_iter()
-				.enumerate()
-				.filter(|(ix, comms)| qualified[*ix] && !comms.is_empty())
-				.map(|(_, comms)| comms[0].clone())
-				.collect();
+			let n_members = Self::authorities().len();
 
-			let mvk = Commitment::derive_key(comms);
+			let qualified = Self::is_correct_dealer();
+			let mut secret_commitments = Vec::new();
+			for i in 0..n_members {
+				if qualified[i] && CommittedPolynomials::contains_key(i as u64) {
+					secret_commitments.push(CommittedPolynomials::get(i as u64)[0].clone());
+				}
+			}
+
+			let mvk = Commitment::derive_key(secret_commitments);
 			MasterVerificationKey::put(mvk);
 
-			let n_members = Self::authorities().len();
+
 			let mut vks = Vec::new();
 			for ix in 0..n_members {
 				let x = &Scalar::from((ix + 1) as u64);
 				let part_keys = (0..n_members)
 					.filter(|creator| {
-						qualified[*creator] && !Self::committed_polynomials()[*creator].is_empty()
+						qualified[*creator] && CommittedPolynomials::contains_key(*creator as u64)
 					})
-					.map(|creator| Commitment::poly_eval(&Self::committed_polynomials()[creator], x))
+					.map(|creator| Commitment::poly_eval(&CommittedPolynomials::get(creator as u64), x))
 					.collect();
 				vks.push(Commitment::derive_key(part_keys))
 			}
@@ -358,13 +359,6 @@ impl<T: Trait> Module<T> {
 			let mut authorities = authorities.to_vec();
 			authorities.sort();
 			<Authorities<T>>::put(&authorities);
-			let n_members = authorities.len();
-			EncryptionPKs::put(sp_std::vec![None::<EncryptionPublicKey>; n_members]);
-			CommittedPolynomials::put(sp_std::vec![Vec::<Commitment>::new(); n_members]);
-			EncryptedSharesLists::put(
-				sp_std::vec![sp_std::vec![None::<EncryptedShare>; n_members]; n_members],
-			);
-			IsCorrectDealer::put(sp_std::vec![false; n_members]);
 		}
 	}
 
@@ -542,13 +536,11 @@ impl<T: Trait> Module<T> {
 				// in the latter -- there is nothing to dispute
 				continue;
 			}
-			if Self::encrypted_shares_lists()[creator][my_ix as usize].is_none() {
+			if !EncryptedShares::contains_key((creator as u64, my_ix)) {
 				disputes.push((creator as AuthIndex, ek.clone().unwrap()));
 				continue;
 			}
-			let encrypted_share = &Self::encrypted_shares_lists()[creator][my_ix as usize]
-				.clone()
-				.unwrap();
+			let encrypted_share = &EncryptedShares::get((creator as u64, my_ix)).clone();
 			let share = ek.as_ref().unwrap().decrypt(&encrypted_share);
 			if share.is_none() || !Self::verify_share(&share.unwrap(), creator, my_ix) {
 				disputes.push((creator as AuthIndex, ek.clone().unwrap()));
@@ -590,7 +582,7 @@ impl<T: Trait> Module<T> {
 	fn handle_round3() {
 		const ALREADY_SET: () = ();
 
-		let qualified = Self::is_correct_creator();
+		let qualified = Self::is_correct_dealer();
 
 		let st_key_secret_key = Self::build_storage_key(b"threshold_secret_key", 3);
 		let val = StorageValueRef::persistent(&st_key_secret_key);
@@ -645,36 +637,52 @@ impl<T: Trait> Module<T> {
 			})
 	}
 
-	fn encryption_keys() -> Vec<Option<EncryptionKey>> {
+	fn get_encryption_key(creator: usize) -> Option<EncryptionKey> {
 		let st_key = Self::build_storage_key(b"enc_key", 0);
 		let raw_secret = StorageValueRef::persistent(&st_key).get().unwrap().unwrap();
 		let secret = Scalar::from_raw(raw_secret);
-		let mut keys = Vec::new();
-		Self::encryption_pks()
-			.iter()
-			.for_each(|enc_pk| match enc_pk {
-				Some(enc_pk) => keys.push(Some(enc_pk.to_encryption_key(secret))),
-				None => keys.push(None),
-			});
+		if EncryptionPKs::contains_key(creator as u64) {
+			return Some(EncryptionPKs::get(creator as u64).to_encryption_key(secret));
+		} else {
+			return None;
+		}
+	}
 
+	fn encryption_keys() -> Vec<Option<EncryptionKey>> {
+		let mut keys = Vec::new();
+		let n = Self::authorities().len();
+		for i in 0..n {
+			keys.push(Self::get_encryption_key(i));
+		}
 		keys
+	}
+	fn is_correct_dealer() -> Vec<bool> {
+		let mut is_correct = Vec::new();
+		let n = Self::authorities().len();
+		for i in 0..n {
+			is_correct.push(IsCorrectDealer::get(i as u64));
+		}
+		is_correct
 	}
 
 	fn verify_share(share: &Scalar, creator: usize, issuer: u64) -> bool {
+		if !CommittedPolynomials::contains_key(creator as u64) {
+			return false;
+		}
 		Commitment::poly_eval(
-			&Self::committed_polynomials()[creator],
+			&CommittedPolynomials::get(creator as u64),
 			&Scalar::from(issuer + 1),
 		)
 		.verify_share(&share)
 	}
 
 	fn check_encryption_key(encryption_key: &EncryptionKey, creator: usize, issuer: usize) -> bool {
-		let epk1 = &Self::encryption_pks()[creator];
-		let epk2 = &Self::encryption_pks()[issuer];
-		if epk1.is_none() || epk2.is_none() {
+		if !EncryptionPKs::contains_key(creator as u64) || !EncryptionPKs::contains_key(issuer as u64) {
 			return false;
 		}
-		encryption_key.is_correct(epk1.as_ref().unwrap(), epk2.as_ref().unwrap())
+		let epk1 = &EncryptionPKs::get(creator as u64);
+		let epk2 = &EncryptionPKs::get(issuer as u64);
+		encryption_key.is_correct(epk1, epk2)
 	}
 
 	pub fn master_verification_key() -> Option<VerifyKey> {
