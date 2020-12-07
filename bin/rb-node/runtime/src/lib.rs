@@ -523,10 +523,6 @@ impl_runtime_apis! {
 			DKG::verification_keys()
 		}
 
-		fn authority_index() -> Option<sp_dkg::AuthIndex> {
-			DKG::my_authority_index()
-		}
-
 		fn master_key_ready() -> NumberFor<Block> {
 			DKG::master_key_ready()
 		}

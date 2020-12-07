@@ -21,7 +21,7 @@ use sc_network_gossip::{
 use sp_runtime::{generic::BlockId, traits::Block as BlockT, traits::NumberFor};
 
 use sp_dkg::DKGApi;
-use sp_randomness_beacon::{RBBox, Randomness, RandomnessShare, RandomnessBeaconApi};
+use sp_randomness_beacon::{RBBox, Randomness, RandomnessBeaconApi, RandomnessShare};
 
 use futures::{channel::mpsc::Receiver, prelude::*};
 use parking_lot::Mutex;
@@ -552,7 +552,6 @@ mod tests {
 		master_verification_key: Option<VerifyKey>,
 		master_key_ready: NumberFor<Block>,
 		threshold: u64,
-		authority_index: Option<AuthIndex>,
 		verification_keys: Option<Vec<VerifyKey>>,
 		public_keybox_parts: Option<(Option<AuthIndex>, Vec<VerifyKey>, VerifyKey, u64)>,
 		storage_key_sk: Option<Vec<u8>>,
@@ -565,7 +564,6 @@ mod tests {
 			master_verification_key: Option<VerifyKey>,
 			master_key_ready: NumberFor<Block>,
 			threshold: u64,
-			authority_index: Option<AuthIndex>,
 			verification_keys: Option<Vec<VerifyKey>>,
 			public_keybox_parts: Option<(Option<AuthIndex>, Vec<VerifyKey>, VerifyKey, u64)>,
 			storage_key_sk: Option<Vec<u8>>,
@@ -576,7 +574,6 @@ mod tests {
 				master_verification_key,
 				master_key_ready,
 				threshold,
-				authority_index,
 				verification_keys,
 				public_keybox_parts,
 				storage_key_sk,
@@ -614,10 +611,6 @@ mod tests {
 
 			fn threshold() -> u64{
 				self.inner.threshold.clone()
-			}
-
-			fn authority_index() -> Option<AuthIndex>{
-				self.inner.authority_index.clone()
 			}
 
 			fn verification_keys() -> Option<Vec<VerifyKey>>{
@@ -673,8 +666,14 @@ mod tests {
 		));
 		let network = TestNetwork::default();
 
-		let mut alice_rg =
-			RandomnessGossip::new(threshold, ni_rx, network.clone(), randomness_tx, runtime_api, 0);
+		let mut alice_rg = RandomnessGossip::new(
+			threshold,
+			ni_rx,
+			network.clone(),
+			randomness_tx,
+			runtime_api,
+			0,
+		);
 
 		let ni = NonceInfo {
 			nonce: Hash::default(),
@@ -740,8 +739,14 @@ mod tests {
 		let bob_rtx = Some(tx);
 		let (mut bob_ni_tx, bob_ni_rx) = channel(1);
 
-		let mut bob_rg =
-			RandomnessGossip::new(threshold, bob_ni_rx, network.clone(), bob_rtx, runtime_api, 0);
+		let mut bob_rg = RandomnessGossip::new(
+			threshold,
+			bob_ni_rx,
+			network.clone(),
+			bob_rtx,
+			runtime_api,
+			0,
+		);
 
 		let ni = NonceInfo {
 			nonce: Hash::default(),

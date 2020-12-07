@@ -154,22 +154,22 @@ decl_storage! {
 
 		// round 0
 
-		EncryptionPKs: map hasher(twox_64_concat) u64 => EncryptionPublicKey;
+		EncryptionPKs: map hasher(twox_64_concat) AuthIndex => EncryptionPublicKey;
 
 
 		// round 1
 
 		// ith entry is the CommitedPoly of ith node submitted in a tx in round 1
-		CommittedPolynomials: map hasher(twox_64_concat) u64 => Vec<Commitment>;
+		CommittedPolynomials: map hasher(twox_64_concat) AuthIndex => Vec<Commitment>;
 		// (i,j) th entry is the share i dealt for j node in round 1
-		EncryptedShares: map hasher(twox_64_concat) (u64, u64) => EncryptedShare;
+		EncryptedShares: map hasher(twox_64_concat) (AuthIndex, AuthIndex) => EncryptedShare;
 
 
 		// round 2
 		// map of n bools: ith is true <=> both the below conditions are satisfied:
 		// 1) ith node succesfully participated in round 0 and round 1
 		// 2) there was no succesful dispute that proves cheating of ith node in round 2
-		IsCorrectDealer: map hasher(twox_64_concat) u64 => bool = false;
+		IsCorrectDealer: map hasher(twox_64_concat) AuthIndex => bool = false;
 
 
 		// round 3
@@ -178,11 +178,12 @@ decl_storage! {
 
 
 		/// The current authorities
-		pub Authorities get(fn authorities): Vec<T::AuthorityId>;
+		pub Authorities: map hasher(twox_64_concat) AuthIndex => T::AuthorityId;
 
 
 		/// The threshold of BLS scheme
 		pub Threshold: u64;
+		pub NMembers: u64;
 	}
 	add_extra_genesis {
 		config(authorities): Vec<T::AuthorityId>;
@@ -198,99 +199,101 @@ decl_module! {
 	pub struct Module<T: Trait> for enum Call where origin: T::Origin {
 
 		#[weight = 1_000_000]
-		pub fn post_encryption_key(origin, pk: EncryptionPublicKey) {
+		pub fn post_encryption_key(origin, ix: AuthIndex, pk: EncryptionPublicKey) {
 			let now = <frame_system::Module<T>>::block_number();
 			if !(now <= Self::round_end(0)) {
 				return Ok(());
 			}
 
-			let who = ensure_signed(origin)?;
-			if let Some(ix) = Self::authority_index(who){
-				EncryptionPKs::insert(ix, pk);
+			if !Self::check_authority(ix, ensure_signed(origin)?) {
+				return Ok(())
 			}
+
+			EncryptionPKs::insert(ix, pk);
 		}
 
 		#[weight = ((shares.len() + comm_poly.len()) as u64 + 1)*(1_000_000)]
-		pub fn post_secret_shares(origin, shares: Vec<Option<EncryptedShare>>, comm_poly: Vec<Commitment>, hash_round0: T::Hash) {
+		pub fn post_secret_shares(origin, ix: AuthIndex, shares: Vec<Option<EncryptedShare>>, comm_poly: Vec<Commitment>, hash_round0: T::Hash) {
 			let now = <frame_system::Module<T>>::block_number();
 			if !(now > Self::round_end(0) && now <= Self::round_end(1)) {
 				debug::info!("Wrong block number for post_secret_shares: {:?}.", now);
 				return Ok(());
 			}
-			if (shares.len() != Self::authorities().len()) || (comm_poly.len() as u64 != Self::threshold()) {
+			if !Self::check_authority(ix, ensure_signed(origin)?) {
+				return Ok(())
+			}
+
+			if (shares.len() != Self::n_members() as usize) || (comm_poly.len() as u64 != Self::threshold()) {
 				debug::info!("Wrong shares len {:} or comm_poly len {:?} for post_secret_shares.",
 					shares.len(),
 					comm_poly.len());
 				return Ok(());
 			}
 
-			let who = ensure_signed(origin)?;
-			if let Some(ix) = Self::authority_index(who){
-				if EncryptionPKs::contains_key(ix) {
-					let round0_number: T::BlockNumber = Self::round_end(0);
-					let correct_hash_round0 = <frame_system::Module<T>>::block_hash(round0_number);
-					if hash_round0 == correct_hash_round0 {
-						for (share_ix, share) in shares.iter().enumerate() {
-							if share.is_some() {
-								EncryptedShares::insert((ix, share_ix as u64), share.unwrap());
-							}
+			if EncryptionPKs::contains_key(ix) {
+				let round0_number: T::BlockNumber = Self::round_end(0);
+				let correct_hash_round0 = <frame_system::Module<T>>::block_hash(round0_number);
+				if hash_round0 == correct_hash_round0 {
+					for (share_ix, share) in shares.iter().enumerate() {
+						if share.is_some() {
+							EncryptedShares::insert((ix, share_ix as AuthIndex), share.unwrap());
 						}
-						CommittedPolynomials::insert(ix, comm_poly);
-						IsCorrectDealer::insert(ix, true);
-						debug::info!("Successfully executed post_secret_shares for id {:?} in block {:?}.", ix, now);
-					} else {
-						debug::info!("Wrong hash_round0 value for post_secret_shares.");
 					}
+					CommittedPolynomials::insert(ix, comm_poly);
+					IsCorrectDealer::insert(ix, true);
+					debug::info!("Successfully executed post_secret_shares for id {:?} in block {:?}.", ix, now);
 				} else {
-					debug::info!("A dealer {:?} who has not posted EncryptionPK tried to submit secret shares.", ix);
+					debug::info!("Wrong hash_round0 value for post_secret_shares.");
 				}
+			} else {
+				debug::info!("A dealer {:?} who has not posted EncryptionPK tried to submit secret shares.", ix);
 			}
 		}
 
 		#[weight = (disputes.len() as u64 + 1)*(4_000_000)]
-		pub fn post_disputes(origin, disputes: Vec<(AuthIndex, EncryptionKey)>, hash_round1: T::Hash) {
+		pub fn post_disputes(origin, ix: AuthIndex, disputes: Vec<(AuthIndex, EncryptionKey)>, hash_round1: T::Hash) {
 			let now = <frame_system::Module<T>>::block_number();
 			if !(now > Self::round_end(1) && now <= Self::round_end(2)) {
 				debug::info!("Wrong block number for post_disputes: {:?}.", now);
 				return Ok(());
 			}
 
-			let who = ensure_signed(origin)?;
-			if let Some(ix) = Self::authority_index(who){
-				let round1_number: T::BlockNumber = Self::round_end(1);
-				let correct_hash_round1 = <frame_system::Module<T>>::block_hash(round1_number);
-				if hash_round1 == correct_hash_round1 {
-					debug::info!("Considering {:?} disputes for {:?} in block {:?}", disputes.len(), ix, now);
+			if !Self::check_authority(ix, ensure_signed(origin)?) {
+				return Ok(())
+			}
+			let round1_number: T::BlockNumber = Self::round_end(1);
+			let correct_hash_round1 = <frame_system::Module<T>>::block_hash(round1_number);
+			if hash_round1 == correct_hash_round1 {
+				debug::info!("Considering {:?} disputes for {:?} in block {:?}", disputes.len(), ix, now);
 
-					disputes.into_iter().for_each(|(creator, ek)| {
-						if IsCorrectDealer::get(creator) == false {
-							// No need to consider this dispute, the creator is already marked as incorrect.
-							return
-						}
-						if !Self::check_encryption_key(&ek, creator as usize, ix as usize) {
-							// there are 3 possible situations when this if fires, in all cases we can ignore this dispute
-							// if ek is wrong then this dispute is unfounded
-							// if creator's encryption key is None then he is marked as incorrect anyway
-							// if ix's encryption key is None then this dispute is unfounded
-							return
-						}
-						// The below line is fine since encrypted_shares_lists is initialized as a square
-						// array with all Nones.
+				disputes.into_iter().for_each(|(creator, ek)| {
+					if IsCorrectDealer::get(creator) == false {
+						// No need to consider this dispute, the creator is already marked as incorrect.
+						return
+					}
+					if !Self::check_encryption_key(&ek, creator as usize, ix as usize) {
+						// there are 3 possible situations when this if fires, in all cases we can ignore this dispute
+						// if ek is wrong then this dispute is unfounded
+						// if creator's encryption key is None then he is marked as incorrect anyway
+						// if ix's encryption key is None then this dispute is unfounded
+						return
+					}
+					// The below line is fine since encrypted_shares_lists is initialized as a square
+					// array with all Nones.
 
-						if !EncryptedShares::contains_key((creator, ix)) {
-							IsCorrectDealer::insert(creator, false);
-							return
-						}
-						let encrypted_share = &EncryptedShares::get((creator, ix)).clone();
+					if !EncryptedShares::contains_key((creator, ix)) {
+						IsCorrectDealer::insert(creator, false);
+						return
+					}
+					let encrypted_share = &EncryptedShares::get((creator, ix)).clone();
 
-						let share = ek.decrypt(&encrypted_share);
-						if share.is_none() || !Self::verify_share(&share.unwrap(), creator as usize, ix) {
-							IsCorrectDealer::insert(creator, false);
-						}
-					});
-				} else {
-					debug::info!("Wrong hash_round0 value for post_disputes.");
-				}
+					let share = ek.decrypt(&encrypted_share);
+					if share.is_none() || !Self::verify_share(&share.unwrap(), creator as usize, ix) {
+						IsCorrectDealer::insert(creator, false);
+					}
+				});
+			} else {
+				debug::info!("Wrong hash_round0 value for post_disputes.");
 			}
 		}
 
@@ -299,13 +302,13 @@ decl_module! {
 				return
 			}
 
-			let n_members = Self::authorities().len();
+			let n_members = Self::n_members();
 
 			let qualified = Self::is_correct_dealer();
 			let mut secret_commitments = Vec::new();
 			for i in 0..n_members {
-				if qualified[i] && CommittedPolynomials::contains_key(i as u64) {
-					secret_commitments.push(CommittedPolynomials::get(i as u64)[0].clone());
+				if qualified[i] && CommittedPolynomials::contains_key(i as AuthIndex) {
+					secret_commitments.push(CommittedPolynomials::get(i as AuthIndex)[0].clone());
 				}
 			}
 
@@ -318,9 +321,9 @@ decl_module! {
 				let x = &Scalar::from((ix + 1) as u64);
 				let part_keys = (0..n_members)
 					.filter(|creator| {
-						qualified[*creator] && CommittedPolynomials::contains_key(*creator as u64)
+						qualified[*creator] && CommittedPolynomials::contains_key(*creator as AuthIndex)
 					})
-					.map(|creator| Commitment::poly_eval(&CommittedPolynomials::get(creator as u64), x))
+					.map(|creator| Commitment::poly_eval(&CommittedPolynomials::get(creator as AuthIndex), x))
 					.collect();
 				vks.push(Commitment::derive_key(part_keys))
 			}
@@ -328,23 +331,18 @@ decl_module! {
 		}
 
 		fn offchain_worker(block_number: T::BlockNumber) {
-			if Self::local_authority_key().is_some() {
-				debug::info!("Offchain worker call at block {:?}.", block_number);
-				// At the end of Round 2, the public Keybox is ready
-				// Round 3 is only for the offchain worker to put the secret key in its storage.
-				if block_number < Self::round_end(0)  {
-						Self::handle_round0();
-				} else if block_number < Self::round_end(1) {
-						Self::handle_round1();
-				} else if block_number < Self::round_end(2) {
-						Self::handle_round2();
-				} else if block_number < Self::round_end(3) {
-						Self::handle_round3();
-				}
-			} else {
-				debug::info!("Offchain worker call at block {:?}, ignored as we are not a committee member.", block_number);
+			debug::info!("Offchain worker call at block {:?}.", block_number);
+			// At the end of Round 2, the public Keybox is ready
+			// Round 3 is only for the offchain worker to put the secret key in its storage.
+			if block_number < Self::round_end(0)  {
+					Self::handle_round0();
+			} else if block_number < Self::round_end(1) {
+					Self::handle_round1();
+			} else if block_number < Self::round_end(2) {
+					Self::handle_round2();
+			} else if block_number < Self::round_end(3) {
+					Self::handle_round3();
 			}
-
 		}
 	}
 }
@@ -352,13 +350,16 @@ decl_module! {
 impl<T: Trait> Module<T> {
 	fn init_store(authorities: &[T::AuthorityId]) {
 		if !authorities.is_empty() {
-			assert!(
-				Self::authorities().is_empty(),
-				"Authorities are already initialized!"
-			);
+			assert!(!NMembers::exists(), "Authorities are already initialized!");
+			NMembers::put(authorities.len() as u64);
+
 			let mut authorities = authorities.to_vec();
 			authorities.sort();
-			<Authorities<T>>::put(&authorities);
+
+			authorities
+				.into_iter()
+				.enumerate()
+				.for_each(|(ix, auth)| Authorities::<T>::insert(ix as AuthIndex, auth));
 		}
 	}
 
@@ -373,14 +374,22 @@ impl<T: Trait> Module<T> {
 	}
 
 	fn set_threshold(threshold: u64) {
-		let n_members = Self::authorities().len();
 		assert!(
-			0 < threshold && threshold <= n_members as u64,
+			0 < threshold && threshold <= NMembers::get(),
 			"Wrong threshold or n_members"
 		);
 
 		assert!(!Threshold::exists(), "Threshold is already initialized!");
 		Threshold::set(threshold);
+	}
+
+	fn check_authority(ix: AuthIndex, who: T::AccountId) -> bool {
+		if !Authorities::<T>::contains_key(ix) {
+			return false;
+		}
+
+		let auth: T::AuthorityId = Authorities::<T>::get(ix);
+		return Into::<T::Public>::into(auth).into_account() == who;
 	}
 
 	fn build_storage_key(prefix: &[u8], round_number: usize) -> Vec<u8> {
@@ -398,8 +407,8 @@ impl<T: Trait> Module<T> {
 	fn handle_round0() {
 		const ALREADY_SET: () = ();
 
-		let auth = match Self::local_authority_key() {
-			Some((_, auth)) => auth,
+		let (ix, auth) = match Self::local_authority_key() {
+			Some(ia) => ia,
 			None => return,
 		};
 
@@ -419,7 +428,7 @@ impl<T: Trait> Module<T> {
 			}
 			let enc_pk = EncryptionPublicKey::from_raw_scalar(raw_scalar);
 			let tx_res =
-				signer.send_signed_transaction(|_| Call::post_encryption_key(enc_pk.clone()));
+				signer.send_signed_transaction(|_| Call::post_encryption_key(ix, enc_pk.clone()));
 
 			for (_, res) in &tx_res {
 				if let Err(e) = res {
@@ -433,13 +442,13 @@ impl<T: Trait> Module<T> {
 	fn handle_round1() {
 		const ALREADY_SET: () = ();
 
-		let auth = match Self::local_authority_key() {
-			Some((_, auth)) => auth,
+		let (ix, auth) = match Self::local_authority_key() {
+			Some(ia) => ia,
 			None => return,
 		};
 
 		// 0. generate secrets
-		let n_members = Self::authorities().len();
+		let n_members = Self::n_members();
 		let threshold = Threshold::get();
 		let st_key = Self::build_storage_key(b"secret_poly", 1);
 		let val = StorageValueRef::persistent(&st_key);
@@ -488,7 +497,7 @@ impl<T: Trait> Module<T> {
 			return;
 		}
 		let tx_res = signer.send_signed_transaction(|_| {
-			Call::post_secret_shares(enc_shares.clone(), comms.clone(), hash_round0)
+			Call::post_secret_shares(ix, enc_shares.clone(), comms.clone(), hash_round0)
 		});
 
 		for (_, res) in &tx_res {
@@ -519,7 +528,7 @@ impl<T: Trait> Module<T> {
 			return;
 		}
 
-		let n_members = Self::authorities().len();
+		let n_members = Self::n_members();
 
 		// 0. generate encryption keys
 		let encryption_keys = Self::encryption_keys();
@@ -536,11 +545,11 @@ impl<T: Trait> Module<T> {
 				// in the latter -- there is nothing to dispute
 				continue;
 			}
-			if !EncryptedShares::contains_key((creator as u64, my_ix)) {
+			if !EncryptedShares::contains_key((creator as AuthIndex, my_ix)) {
 				disputes.push((creator as AuthIndex, ek.clone().unwrap()));
 				continue;
 			}
-			let encrypted_share = &EncryptedShares::get((creator as u64, my_ix)).clone();
+			let encrypted_share = &EncryptedShares::get((creator as AuthIndex, my_ix)).clone();
 			let share = ek.as_ref().unwrap().decrypt(&encrypted_share);
 			if share.is_none() || !Self::verify_share(&share.unwrap(), creator, my_ix) {
 				disputes.push((creator as AuthIndex, ek.clone().unwrap()));
@@ -568,8 +577,8 @@ impl<T: Trait> Module<T> {
 			return;
 		}
 
-		let tx_res =
-			signer.send_signed_transaction(|_| Call::post_disputes(disputes.clone(), hash_round1));
+		let tx_res = signer
+			.send_signed_transaction(|_| Call::post_disputes(my_ix, disputes.clone(), hash_round1));
 
 		for (_, res) in &tx_res {
 			if let Err(e) = res {
@@ -615,34 +624,24 @@ impl<T: Trait> Module<T> {
 		}
 	}
 
-	fn authority_index(who: T::AccountId) -> Option<AuthIndex> {
-		Self::authorities()
-			.into_iter()
-			.position(|auth| Into::<T::Public>::into(auth.clone()).into_account() == who)
-			.map(|p| p as AuthIndex)
-	}
-
 	fn local_authority_key() -> Option<(AuthIndex, T::AuthorityId)> {
 		let local_keys = T::AuthorityId::all();
 
-		Self::authorities()
-			.into_iter()
-			.enumerate()
-			.find_map(move |(index, authority)| {
-				local_keys
-					.clone()
-					.into_iter()
-					.position(|local_key| authority == local_key)
-					.map(|location| (index as AuthIndex, local_keys[location].clone()))
-			})
+		Authorities::<T>::iter().find_map(move |(index, authority)| {
+			local_keys
+				.clone()
+				.into_iter()
+				.position(|local_key| authority == local_key)
+				.map(|location| (index as AuthIndex, local_keys[location].clone()))
+		})
 	}
 
 	fn get_encryption_key(creator: usize) -> Option<EncryptionKey> {
 		let st_key = Self::build_storage_key(b"enc_key", 0);
 		let raw_secret = StorageValueRef::persistent(&st_key).get().unwrap().unwrap();
 		let secret = Scalar::from_raw(raw_secret);
-		if EncryptionPKs::contains_key(creator as u64) {
-			return Some(EncryptionPKs::get(creator as u64).to_encryption_key(secret));
+		if EncryptionPKs::contains_key(creator as AuthIndex) {
+			return Some(EncryptionPKs::get(creator as AuthIndex).to_encryption_key(secret));
 		} else {
 			return None;
 		}
@@ -650,7 +649,7 @@ impl<T: Trait> Module<T> {
 
 	fn encryption_keys() -> Vec<Option<EncryptionKey>> {
 		let mut keys = Vec::new();
-		let n = Self::authorities().len();
+		let n = Self::n_members();
 		for i in 0..n {
 			keys.push(Self::get_encryption_key(i));
 		}
@@ -658,30 +657,32 @@ impl<T: Trait> Module<T> {
 	}
 	fn is_correct_dealer() -> Vec<bool> {
 		let mut is_correct = Vec::new();
-		let n = Self::authorities().len();
+		let n = Self::n_members();
 		for i in 0..n {
-			is_correct.push(IsCorrectDealer::get(i as u64));
+			is_correct.push(IsCorrectDealer::get(i as AuthIndex));
 		}
 		is_correct
 	}
 
-	fn verify_share(share: &Scalar, creator: usize, issuer: u64) -> bool {
-		if !CommittedPolynomials::contains_key(creator as u64) {
+	fn verify_share(share: &Scalar, creator: usize, issuer: AuthIndex) -> bool {
+		if !CommittedPolynomials::contains_key(creator as AuthIndex) {
 			return false;
 		}
 		Commitment::poly_eval(
-			&CommittedPolynomials::get(creator as u64),
+			&CommittedPolynomials::get(creator as AuthIndex),
 			&Scalar::from(issuer + 1),
 		)
 		.verify_share(&share)
 	}
 
 	fn check_encryption_key(encryption_key: &EncryptionKey, creator: usize, issuer: usize) -> bool {
-		if !EncryptionPKs::contains_key(creator as u64) || !EncryptionPKs::contains_key(issuer as u64) {
+		if !EncryptionPKs::contains_key(creator as AuthIndex)
+			|| !EncryptionPKs::contains_key(issuer as AuthIndex)
+		{
 			return false;
 		}
-		let epk1 = &EncryptionPKs::get(creator as u64);
-		let epk2 = &EncryptionPKs::get(issuer as u64);
+		let epk1 = &EncryptionPKs::get(creator as AuthIndex);
+		let epk2 = &EncryptionPKs::get(issuer as AuthIndex);
 		encryption_key.is_correct(epk1, epk2)
 	}
 
@@ -692,17 +693,13 @@ impl<T: Trait> Module<T> {
 		}
 	}
 
-	pub fn my_authority_index() -> Option<AuthIndex> {
-		Self::local_authority_key().map(|(my_ix, _)| my_ix)
-	}
-
 	pub fn master_key_ready() -> T::BlockNumber {
 		// this is the round number when the outside world expects master key to be ready
 		T::DKGReady::get()
 	}
 
 	pub fn public_keybox_parts() -> Option<(Option<AuthIndex>, Vec<VerifyKey>, VerifyKey, u64)> {
-		let ix = Self::my_authority_index();
+		let ix = Self::local_authority_key().map(|(my_ix, _)| my_ix);
 
 		let verification_keys = match Self::verification_keys() {
 			Some(keys) => keys,
@@ -738,6 +735,10 @@ impl<T: Trait> Module<T> {
 
 	pub fn threshold() -> u64 {
 		Threshold::get()
+	}
+
+	pub fn n_members() -> usize {
+		NMembers::get() as usize
 	}
 }
 
