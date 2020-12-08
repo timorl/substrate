@@ -625,15 +625,23 @@ impl<T: Trait> Module<T> {
 	}
 
 	fn local_authority_key() -> Option<(AuthIndex, T::AuthorityId)> {
-		let local_keys = T::AuthorityId::all();
-
-		Authorities::<T>::iter().find_map(move |(index, authority)| {
-			local_keys
-				.clone()
-				.into_iter()
-				.position(|local_key| authority == local_key)
-				.map(|location| (index as AuthIndex, local_keys[location].clone()))
-		})
+		let st_key = Self::build_storage_key(b"local_key_info", 0);
+		let maybe_key_info = StorageValueRef::persistent(&st_key).get();
+		match maybe_key_info {
+			Some(Some(key_info)) => return key_info,
+			_ => {
+				let local_keys = T::AuthorityId::all();
+				let key_info = Authorities::<T>::iter().find_map(move |(index, authority)| {
+					local_keys
+						.clone()
+						.into_iter()
+						.position(|local_key| authority == local_key)
+						.map(|location| (index as AuthIndex, local_keys[location].clone()))
+				});
+				StorageValueRef::persistent(&st_key).set(&key_info);
+				return key_info;
+			}
+		}
 	}
 
 	fn get_encryption_key(creator: usize) -> Option<EncryptionKey> {
@@ -699,7 +707,17 @@ impl<T: Trait> Module<T> {
 	}
 
 	pub fn public_keybox_parts() -> Option<(Option<AuthIndex>, Vec<VerifyKey>, VerifyKey, u64)> {
-		let ix = Self::local_authority_key().map(|(my_ix, _)| my_ix);
+		let local_keys = T::AuthorityId::all();
+		let key_info = Authorities::<T>::iter().find_map(move |(index, authority)| {
+			local_keys
+				.clone()
+				.into_iter()
+				.position(|local_key| authority == local_key)
+				.map(|location| (index as AuthIndex, local_keys[location].clone()))
+		});
+		let ix = key_info.map(|(my_ix, _)| my_ix);
+		// we cannot call local_authority_key() here to fetch ix above, because local_authority_key()
+		// uses the offchain_worker storage, which cannot be used outside of an offchain worker context
 
 		let verification_keys = match Self::verification_keys() {
 			Some(keys) => keys,
