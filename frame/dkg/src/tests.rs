@@ -115,25 +115,24 @@ fn test_handle_round0(states: &States, my_ix: usize) {
 	assert_eq!(tx.call, Call::post_encryption_key(enc_pk.clone()));
 
 	// manually add the rest encryption public keys
-	<DKG as Store>::EncryptionPKs::mutate(|ref mut values| {
-		for ix in 0..N_MEMBERS {
-			if ix == my_ix {
-				values[ix] = Some(enc_pk.clone())
-			} else {
-				values[ix] = Some(EncryptionPublicKey::from_raw_scalar([ix as u64, 0, 0, 0]))
-			}
+	for ix in 0..N_MEMBERS {
+		if ix == my_ix {
+			<DKG as Store>::EncryptionPKs::insert(ix as u64, enc_pk.clone());
+		} else {
+			<DKG as Store>::EncryptionPKs::insert(ix as u64, EncryptionPublicKey::from_raw_scalar([ix as u64, 0, 0, 0]));
 		}
-	});
-
-	<DKG as Store>::EncryptionPKs::get()
-		.iter()
-		.for_each(|pk| assert!(pk.is_some()));
+	}
+	for ix in 0..N_MEMBERS {
+		assert!(<DKG as Store>::EncryptionPKs::contains_key(ix as u64));
+	}
 }
 
-fn encryption_keys(secret: Scalar) -> impl Iterator<Item = EncryptionKey> {
-	DKG::encryption_pks()
-		.into_iter()
-		.map(move |enc_pk| enc_pk.unwrap().to_encryption_key(secret))
+fn encryption_keys(secret: Scalar) -> Vec<EncryptionKey> {
+	let mut enc_keys = Vec::new();
+	for ix in 0..N_MEMBERS {
+		enc_keys.push(EncryptionPKs::get(ix as u64).to_encryption_key(secret));
+	}
+	enc_keys
 }
 
 fn enc_shares_comms(
@@ -141,22 +140,28 @@ fn enc_shares_comms(
 	poly: Vec<Scalar>,
 ) -> (Vec<Option<EncryptedShare>>, Vec<Commitment>) {
 	let enc_shares = encryption_keys(secret_enc_key)
+		.iter()
 		.enumerate()
 		.map(|(ix, enc_key)| {
 			let x = &Scalar::from(ix as u64 + 1);
 			let share = poly_eval(&poly, x);
 			Some(enc_key.encrypt(&share))
-		});
+		})
+		.collect();
 
 	let comms = (0..THRESHOLD).map(|i| Commitment::new(poly[i])).collect();
 
-	(enc_shares.collect(), comms)
+	(enc_shares, comms)
 }
 
-fn set_shares_commes(ix: usize, shares: Vec<Option<EncryptedShare>>, comms: Vec<Commitment>) {
-	<DKG as Store>::EncryptedSharesLists::mutate(|ref mut values| values[ix] = shares);
-	<DKG as Store>::CommittedPolynomials::mutate(|ref mut values| values[ix] = comms);
-	<DKG as Store>::IsCorrectDealer::mutate(|ref mut values| values[ix] = true);
+fn set_shares_comms(ix: usize, shares: Vec<Option<EncryptedShare>>, comms: Vec<Commitment>) {
+	for (share_ix, maybe_share) in shares.iter().enumerate() {
+		if let Some(share) = maybe_share {
+			<DKG as Store>::EncryptedShares::insert((ix as u64, share_ix as u64), share);
+		}
+	}
+	<DKG as Store>::CommittedPolynomials::insert(ix as u64, comms);
+	<DKG as Store>::IsCorrectDealer::insert(ix as u64, true);
 }
 
 fn test_handle_round1(states: &States, my_ix: usize) {
@@ -184,7 +189,7 @@ fn test_handle_round1(states: &States, my_ix: usize) {
 
 	let secret_enc_key = Scalar::from_raw(get_secret_enc_key(states.offchain.clone()));
 	let (enc_shares, commitments) = enc_shares_comms(secret_enc_key, poly);
-	set_shares_commes(my_ix, enc_shares.clone(), commitments.clone());
+	set_shares_comms(my_ix, enc_shares.clone(), commitments.clone());
 
 	let tx = states.pool.write().transactions.pop().unwrap();
 	assert!(states.pool.read().transactions.is_empty());
@@ -204,7 +209,7 @@ fn test_handle_round1(states: &States, my_ix: usize) {
 		let poly = [ix, 1, 1].iter().map(|i| Scalar::from(*i as u64)).collect();
 		let secret = Scalar::from(ix as u64);
 		let (shares, comms) = enc_shares_comms(secret, poly);
-		set_shares_commes(ix, shares, comms);
+		set_shares_comms(ix, shares, comms);
 	}
 }
 
@@ -225,10 +230,8 @@ fn derive_tsk(my_ix: usize) -> Scalar {
 	let secret_enc_key = Scalar::from(my_ix as u64);
 	let encryption_keys = encryption_keys(secret_enc_key);
 	let mut tsk = Scalar::zero();
-	for (creator, ek) in encryption_keys.enumerate() {
-		let encrypted_share = &DKG::encrypted_shares_lists()[creator][my_ix]
-			.clone()
-			.unwrap();
+	for (creator, ek) in encryption_keys.iter().enumerate() {
+		let encrypted_share = &<DKG as Store>::EncryptedShares::get((creator as u64, my_ix as u64)).clone();
 		let share = ek.decrypt(&encrypted_share).unwrap();
 		tsk += share;
 	}
@@ -265,10 +268,10 @@ fn test_handle_round3(states: &States, my_ix: usize) {
 		.map(|raw| Scalar::from_bytes(&raw.unwrap()).unwrap());
 	assert_eq!(tsk, tsk_shares.fold(Scalar::zero(), |a, b| a + b));
 
-	let comms = DKG::committed_polynomials()
-		.into_iter()
-		.map(|comms| comms[0].clone())
-		.collect();
+	let mut comms = Vec::new();
+	for ix in 0..N_MEMBERS {
+		comms.push(<DKG as Store>::CommittedPolynomials::get(ix as u64)[0].clone());
+	}
 
 	let mvk = Commitment::derive_key(comms);
 	assert_eq!(mvk, <DKG as Store>::MasterVerificationKey::get());
@@ -296,7 +299,7 @@ fn test_handle_round3(states: &States, my_ix: usize) {
 	for ix in 0..N_MEMBERS {
 		let x = &Scalar::from(ix as u64 + 1);
 		let part_keys = (0..N_MEMBERS)
-			.map(|dealer| Commitment::poly_eval(&DKG::committed_polynomials()[dealer], x))
+			.map(|dealer| Commitment::poly_eval(&<DKG as Store>::CommittedPolynomials::get(dealer as u64), x))
 			.collect();
 		vks.push(Commitment::derive_key(part_keys))
 	}
