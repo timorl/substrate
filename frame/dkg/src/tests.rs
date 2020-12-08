@@ -11,7 +11,7 @@ use sp_core::{
 	},
 	H256,
 };
-use sp_dkg::{KeyBox, ShareProvider};
+use sp_dkg::{KeyBox, ShareProvider, AuthIndex};
 use sp_keystore::{
 	testing::KeyStore,
 	{KeystoreExt, SyncCryptoStore},
@@ -31,7 +31,7 @@ fn dkg() {
 		let my_ix = init(my_id, N_MEMBERS, THRESHOLD as u64);
 		test_handle_round0(&states, my_ix);
 		test_handle_round1(&states, my_ix);
-		test_handle_round2(&states);
+		test_handle_round2(&states, my_ix);
 		test_handle_round3(&states, my_ix);
 		test_keybox(&states, my_ix);
 	});
@@ -74,13 +74,15 @@ pub(crate) fn new_test_ext() -> (
 	(ext, states, my_id)
 }
 
-pub(crate) fn init(my_id: sp_dkg::crypto::AuthorityId, n_members: usize, threshold: u64) -> usize {
+pub(crate) fn init(my_id: sp_dkg::crypto::AuthorityId, n_members: usize, threshold: u64) -> AuthIndex {
 	let mut authorities = vec![crypto::DKGId::default(); n_members];
 	authorities[0] = my_id.clone().into();
 	authorities.sort();
 
 	DKG::init_store(&authorities[..]);
-	assert_eq!(DKG::authorities()[..], authorities[..]);
+	for ix in 0..N_MEMBERS {
+		assert_eq!(authorities[ix], <DKG as Store>::Authorities::get(ix as AuthIndex));
+	}
 	DKG::set_threshold(threshold);
 	assert_eq!(<DKG as Store>::Threshold::get(), threshold);
 
@@ -88,6 +90,7 @@ pub(crate) fn init(my_id: sp_dkg::crypto::AuthorityId, n_members: usize, thresho
 		.iter()
 		.position(|id| *id == my_id.clone().into())
 		.unwrap()
+		as AuthIndex
 }
 
 fn get_secret_enc_key(offchain_state: Arc<RwLock<OffchainState>>) -> RawSecret {
@@ -100,7 +103,7 @@ fn get_secret_enc_key(offchain_state: Arc<RwLock<OffchainState>>) -> RawSecret {
 	<RawSecret>::decode(&mut &raw_secret_encoded[..]).unwrap()
 }
 
-fn test_handle_round0(states: &States, my_ix: usize) {
+fn test_handle_round0(states: &States, my_ix: AuthIndex) {
 	// do the round
 	DKG::handle_round0();
 
@@ -112,25 +115,25 @@ fn test_handle_round0(states: &States, my_ix: usize) {
 	assert!(states.pool.read().transactions.is_empty());
 	let tx = Extrinsic::decode(&mut &*tx).unwrap();
 	assert_eq!(tx.signature.unwrap().0, 0);
-	assert_eq!(tx.call, Call::post_encryption_key(enc_pk.clone()));
+	assert_eq!(tx.call, Call::post_encryption_key(my_ix, enc_pk.clone()));
 
 	// manually add the rest encryption public keys
 	for ix in 0..N_MEMBERS {
-		if ix == my_ix {
-			<DKG as Store>::EncryptionPKs::insert(ix as u64, enc_pk.clone());
+		if ix as AuthIndex == my_ix {
+			<DKG as Store>::EncryptionPKs::insert(ix as AuthIndex, enc_pk.clone());
 		} else {
-			<DKG as Store>::EncryptionPKs::insert(ix as u64, EncryptionPublicKey::from_raw_scalar([ix as u64, 0, 0, 0]));
+			<DKG as Store>::EncryptionPKs::insert(ix as AuthIndex, EncryptionPublicKey::from_raw_scalar([ix as u64, 0, 0, 0]));
 		}
 	}
 	for ix in 0..N_MEMBERS {
-		assert!(<DKG as Store>::EncryptionPKs::contains_key(ix as u64));
+		assert!(<DKG as Store>::EncryptionPKs::contains_key(ix as AuthIndex));
 	}
 }
 
 fn encryption_keys(secret: Scalar) -> Vec<EncryptionKey> {
 	let mut enc_keys = Vec::new();
 	for ix in 0..N_MEMBERS {
-		enc_keys.push(EncryptionPKs::get(ix as u64).to_encryption_key(secret));
+		enc_keys.push(EncryptionPKs::get(ix as AuthIndex).to_encryption_key(secret));
 	}
 	enc_keys
 }
@@ -154,17 +157,17 @@ fn enc_shares_comms(
 	(enc_shares, comms)
 }
 
-fn set_shares_comms(ix: usize, shares: Vec<Option<EncryptedShare>>, comms: Vec<Commitment>) {
+fn set_shares_comms(ix: AuthIndex, shares: Vec<Option<EncryptedShare>>, comms: Vec<Commitment>) {
 	for (share_ix, maybe_share) in shares.iter().enumerate() {
 		if let Some(share) = maybe_share {
-			<DKG as Store>::EncryptedShares::insert((ix as u64, share_ix as u64), share);
+			<DKG as Store>::EncryptedShares::insert((ix as AuthIndex, share_ix as AuthIndex), share);
 		}
 	}
-	<DKG as Store>::CommittedPolynomials::insert(ix as u64, comms);
-	<DKG as Store>::IsCorrectDealer::insert(ix as u64, true);
+	<DKG as Store>::CommittedPolynomials::insert(ix as AuthIndex, comms);
+	<DKG as Store>::IsCorrectDealer::insert(ix as AuthIndex, true);
 }
 
-fn test_handle_round1(states: &States, my_ix: usize) {
+fn test_handle_round1(states: &States, my_ix: AuthIndex) {
 	// do the round
 	let mut seed = [0; 32];
 	(0..32u64)
@@ -198,22 +201,22 @@ fn test_handle_round1(states: &States, my_ix: usize) {
 
 	assert_eq!(
 		tx.call,
-		Call::post_secret_shares(enc_shares, commitments, Default::default())
+		Call::post_secret_shares(my_ix, enc_shares, commitments, Default::default())
 	);
 
 	// manually add enc_shares and commitments
 	for ix in 0..N_MEMBERS {
-		if ix == my_ix {
+		if ix as AuthIndex == my_ix {
 			continue;
 		}
-		let poly = [ix, 1, 1].iter().map(|i| Scalar::from(*i as u64)).collect();
-		let secret = Scalar::from(ix as u64);
+		let poly = [ix, 1, 1].iter().map(|i| Scalar::from(*i as AuthIndex)).collect();
+		let secret = Scalar::from(ix as AuthIndex);
 		let (shares, comms) = enc_shares_comms(secret, poly);
-		set_shares_comms(ix, shares, comms);
+		set_shares_comms(ix as AuthIndex, shares, comms);
 	}
 }
 
-fn test_handle_round2(states: &States) {
+fn test_handle_round2(states: &States, my_ix: AuthIndex) {
 	// do the round
 	DKG::handle_round2();
 
@@ -223,7 +226,7 @@ fn test_handle_round2(states: &States) {
 	let tx = Extrinsic::decode(&mut &*tx).unwrap();
 	assert_eq!(tx.signature.unwrap().0, 2);
 
-	assert_eq!(tx.call, Call::post_disputes(Vec::new(), Default::default()));
+	assert_eq!(tx.call, Call::post_disputes(my_ix, Vec::new(), Default::default()));
 }
 
 fn derive_tsk(my_ix: usize) -> Scalar {
@@ -231,7 +234,7 @@ fn derive_tsk(my_ix: usize) -> Scalar {
 	let encryption_keys = encryption_keys(secret_enc_key);
 	let mut tsk = Scalar::zero();
 	for (creator, ek) in encryption_keys.iter().enumerate() {
-		let encrypted_share = &<DKG as Store>::EncryptedShares::get((creator as u64, my_ix as u64)).clone();
+		let encrypted_share = &<DKG as Store>::EncryptedShares::get((creator as AuthIndex, my_ix as AuthIndex)).clone();
 		let share = ek.decrypt(&encrypted_share).unwrap();
 		tsk += share;
 	}
@@ -239,7 +242,7 @@ fn derive_tsk(my_ix: usize) -> Scalar {
 	tsk
 }
 
-fn test_handle_round3(states: &States, my_ix: usize) {
+fn test_handle_round3(states: &States, my_ix: AuthIndex) {
 	// do the round
 	DKG::handle_round3();
 	let round2_end = DKG::round_end(2);
@@ -270,7 +273,7 @@ fn test_handle_round3(states: &States, my_ix: usize) {
 
 	let mut comms = Vec::new();
 	for ix in 0..N_MEMBERS {
-		comms.push(<DKG as Store>::CommittedPolynomials::get(ix as u64)[0].clone());
+		comms.push(<DKG as Store>::CommittedPolynomials::get(ix as AuthIndex)[0].clone());
 	}
 
 	let mvk = Commitment::derive_key(comms);
@@ -287,10 +290,10 @@ fn test_handle_round3(states: &States, my_ix: usize) {
 	let local_secret = Scalar::from_raw(raw_poly_coeffs[0]);
 	let mut msk = local_secret;
 	for ix in 0..N_MEMBERS {
-		if ix == my_ix {
+		if ix as AuthIndex == my_ix {
 			continue;
 		}
-		msk += Scalar::from(ix as u64);
+		msk += Scalar::from(ix as AuthIndex);
 	}
 
 	assert_eq!(mvk, Commitment::derive_key(vec![Commitment::new(msk)]));
@@ -299,14 +302,14 @@ fn test_handle_round3(states: &States, my_ix: usize) {
 	for ix in 0..N_MEMBERS {
 		let x = &Scalar::from(ix as u64 + 1);
 		let part_keys = (0..N_MEMBERS)
-			.map(|dealer| Commitment::poly_eval(&<DKG as Store>::CommittedPolynomials::get(dealer as u64), x))
+			.map(|dealer| Commitment::poly_eval(&<DKG as Store>::CommittedPolynomials::get(dealer as AuthIndex), x))
 			.collect();
 		vks.push(Commitment::derive_key(part_keys))
 	}
 	assert_eq!(vks, <DKG as Store>::VerificationKeys::get());
 
 	for ix in 0..N_MEMBERS {
-		if ix == my_ix {
+		if ix as AuthIndex == my_ix {
 			assert_eq!(vks[ix], VerifyKey::from_secret(&tsk));
 		} else {
 			assert_eq!(vks[ix], VerifyKey::from_secret(&derive_tsk(ix)));
@@ -314,13 +317,13 @@ fn test_handle_round3(states: &States, my_ix: usize) {
 	}
 }
 
-fn test_keybox(states: &States, my_ix: usize) {
+fn test_keybox(states: &States, my_ix: AuthIndex) {
 	let mut kbs = Vec::new();
 	let vks = <DKG as Store>::VerificationKeys::get();
 	let mvk = <DKG as Store>::MasterVerificationKey::get();
 	let st_key = DKG::build_storage_key(b"threshold_secret_key", 3);
 	for ix in 0..N_MEMBERS {
-		if ix == my_ix {
+		if ix as AuthIndex == my_ix {
 			let tsk_encoded = states
 				.offchain
 				.read()
@@ -329,7 +332,7 @@ fn test_keybox(states: &States, my_ix: usize) {
 				.unwrap();
 			let tsk =
 				Scalar::from_bytes(&<[u8; 32]>::decode(&mut &tsk_encoded[..]).unwrap()).unwrap();
-			let tsp = ShareProvider::from_secret(ix as u64, tsk);
+			let tsp = ShareProvider::from_secret(ix as AuthIndex, tsk);
 			kbs.push(KeyBox::new(
 				Some(tsp),
 				vks.clone(),
@@ -337,7 +340,7 @@ fn test_keybox(states: &States, my_ix: usize) {
 				THRESHOLD as u64,
 			));
 		} else {
-			let tsp = ShareProvider::from_secret(ix as u64, derive_tsk(ix));
+			let tsp = ShareProvider::from_secret(ix as AuthIndex, derive_tsk(ix));
 			kbs.push(KeyBox::new(
 				Some(tsp),
 				vks.clone(),
