@@ -707,17 +707,16 @@ impl<T: Trait> Module<T> {
 	}
 
 	pub fn public_keybox_parts() -> Option<(Option<AuthIndex>, Vec<VerifyKey>, VerifyKey, u64)> {
+		// we cannot call local_authority_key() here to fetch ix above, because local_authority_key()
+		// uses the offchain_worker storage, which cannot be used outside of an offchain worker context
 		let local_keys = T::AuthorityId::all();
-		let key_info = Authorities::<T>::iter().find_map(move |(index, authority)| {
+		let ix = Authorities::<T>::iter().find_map(move |(index, authority)| {
 			local_keys
 				.clone()
 				.into_iter()
 				.position(|local_key| authority == local_key)
-				.map(|location| (index as AuthIndex, local_keys[location].clone()))
+				.map(|_| index as AuthIndex)
 		});
-		let ix = key_info.map(|(my_ix, _)| my_ix);
-		// we cannot call local_authority_key() here to fetch ix above, because local_authority_key()
-		// uses the offchain_worker storage, which cannot be used outside of an offchain worker context
 
 		let verification_keys = match Self::verification_keys() {
 			Some(keys) => keys,
