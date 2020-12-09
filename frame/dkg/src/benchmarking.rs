@@ -6,7 +6,7 @@ use frame_benchmarking::benchmarks;
 use frame_system::RawOrigin;
 
 use crate::Module as DKG;
-use sp_dkg::{Commitment, EncryptedShare, EncryptionPublicKey, Scalar};
+use sp_dkg::{Commitment, EncryptedShare, EncryptionPublicKey, Scalar, AuthIndex};
 use sp_std::prelude::*;
 
 benchmarks! {
@@ -16,7 +16,8 @@ benchmarks! {
 		let n=10;
 		let n = n as usize;
 		let threshold = n/ 3 + 1;
-		assert!(<DKG::<T> as Store>::Authorities::get().last().is_some());
+		let n_dkg = <DKG::<T> as Store>::NMembers::get();
+		assert!(<DKG::<T> as Store>::Authorities::contains_key((n_dkg-1) as AuthIndex));
 		init::<T>(n, threshold as u64);
 	}: {DKG::<T>::handle_round0();}
 	verify {
@@ -24,19 +25,22 @@ benchmarks! {
 	}
 
 	post_encryption_key {
-		assert!(<DKG::<T> as Store>::Authorities::get().last().is_some());
-		let caller = <DKG::<T> as Store>::Authorities::get().last().unwrap().clone().into().into_account();
+		let n_dkg = <DKG::<T> as Store>::NMembers::get();
+		assert!(<DKG::<T> as Store>::Authorities::contains_key((n_dkg-1) as AuthIndex));
+		let caller = <DKG::<T> as Store>::Authorities::get((n_dkg-1) as AuthIndex).into().into_account();
 		let enc_pk = EncryptionPublicKey::default();
-	}: _(RawOrigin::Signed(caller), enc_pk)
+	}: _(RawOrigin::Signed(caller),(n_dkg-1) as AuthIndex, enc_pk)
 	verify {
-		assert!(<DKG::<T> as Store>::EncryptionPKs::get().last().is_some());
+		let n_dkg = <DKG::<T> as Store>::NMembers::get();
+		assert!(<DKG::<T> as Store>::EncryptionPKs::contains_key((n_dkg-1) as AuthIndex));
 	}
 
 	handle_round1 {
 		let n=10;
 		let n = n as usize;
 		let threshold = n/ 3 + 1;
-		assert!(<DKG::<T> as Store>::Authorities::get().last().is_some());
+		let n_dkg = <DKG::<T> as Store>::NMembers::get();
+		assert!(<DKG::<T> as Store>::Authorities::contains_key((n_dkg-1) as AuthIndex));
 		init::<T>(n as usize, threshold as u64);
 	}: {DKG::<T>::handle_round1();}
 	verify {
@@ -48,12 +52,12 @@ benchmarks! {
 		let n = n as usize;
 		let threshold = n/ 3 + 1;
 
-		assert!(<DKG::<T> as Store>::Authorities::get().last().is_some());
-		let caller = <DKG::<T> as Store>::Authorities::get().last().unwrap().clone().into().into_account();
+		let n_dkg = <DKG::<T> as Store>::NMembers::get();
+		assert!(<DKG::<T> as Store>::Authorities::contains_key((n_dkg-1) as AuthIndex));
+
 
 		init::<T>(n as usize, threshold as u64);
-		<DKG::<T> as Store>::CommittedPolynomials::mutate(|ref mut values| values[n-1] = vec![]);
-		<DKG::<T> as Store>::EncryptedSharesLists::mutate(|ref mut values| values[n-1] = vec![None; n]);
+		let caller = <DKG::<T> as Store>::Authorities::get((n-1) as AuthIndex).into().into_account();
 
 		frame_system::Module::<T>::set_block_number(DKG::<T>::round_end(1));
 
@@ -67,10 +71,13 @@ benchmarks! {
 		}
 		let hash_round0 = T::Hash::default();
 
-	}: _(RawOrigin::Signed(caller), secret_shares, comm_poly, hash_round0)
+	}: _(RawOrigin::Signed(caller), (n-1) as AuthIndex, secret_shares, comm_poly, hash_round0)
 	verify {
-		assert_eq!(<DKG::<T> as Store>::CommittedPolynomials::get()[n-1].len(), threshold);
-		assert!(<DKG::<T> as Store>::EncryptedSharesLists::get()[n-1].iter().all(|es| es.is_some()));
+		assert_eq!(<DKG::<T> as Store>::CommittedPolynomials::get((n-1) as AuthIndex).len(), threshold);
+		for ix in 0..n {
+			assert!(<DKG::<T> as Store>::EncryptedShares::contains_key(((n-1) as AuthIndex, ix as AuthIndex)));
+		}
+
 	}
 
 	post_disputes {
@@ -78,59 +85,54 @@ benchmarks! {
 		let n = n as usize;
 		let threshold = n/ 3 + 1;
 
-		assert!(<DKG::<T> as Store>::Authorities::get().last().is_some());
-		let caller = <DKG::<T> as Store>::Authorities::get().last().unwrap().clone().into().into_account();
+		let n_dkg = <DKG::<T> as Store>::NMembers::get();
+		assert!(<DKG::<T> as Store>::Authorities::contains_key((n_dkg-1) as AuthIndex));
 
 		init::<T>(n as usize, threshold as u64);
+		let caller = <DKG::<T> as Store>::Authorities::get((n-1) as AuthIndex).into().into_account();
 
 		frame_system::Module::<T>::set_block_number(DKG::<T>::round_end(2));
 
 		let my_ix = n-1;
 		let bad_dealer = 0usize;
 		let my_secret_key = Scalar::from(n as u64 -1);
-		let enc_key = <DKG<T> as Store>::EncryptionPKs::get()[bad_dealer].as_ref().unwrap().to_encryption_key(my_secret_key);
+		let enc_key = <DKG<T> as Store>::EncryptionPKs::get(bad_dealer as AuthIndex).to_encryption_key(my_secret_key);
 		let share = Scalar::from(1);
 		let enc_share = enc_key.encrypt(&share);
-		<DKG::<T> as Store>::EncryptedSharesLists::mutate(|ref mut values| values[bad_dealer][my_ix] = Some(enc_share));
+		<DKG::<T> as Store>::EncryptedShares::insert((bad_dealer as AuthIndex, my_ix as AuthIndex), enc_share);
 		assert_eq!(DKG::<T>::verify_share(&share, bad_dealer, my_ix as u64), false);
 		let disputes = vec![(bad_dealer as u64, enc_key)];
 		let hash_round1 = T::Hash::default();
-	}: _(RawOrigin::Signed(caller), disputes, hash_round1)
+	}: _(RawOrigin::Signed(caller),my_ix as AuthIndex, disputes, hash_round1)
 	verify {
-		assert_eq!(<DKG::<T> as Store>::IsCorrectDealer::get()[bad_dealer], false);
+		assert_eq!(<DKG::<T> as Store>::IsCorrectDealer::get(bad_dealer as AuthIndex), false);
 	}
 
 }
 
 fn init<T: Trait>(n_members: usize, threshold: u64) {
-	let auth = <DKG<T> as Store>::Authorities::get()
-		.last()
-		.unwrap()
-		.clone();
-	let mut authorities = vec![T::AuthorityId::default(); n_members];
-	authorities[n_members - 1] = auth;
-	<DKG<T> as Store>::Authorities::put(&authorities);
+	let n_dkg = <DKG<T> as Store>::NMembers::get();
+	let auth = <DKG<T> as Store>::Authorities::get((n_dkg) as AuthIndex);
+	for ix in 0..(n_dkg) {
+		<DKG<T> as Store>::Authorities::remove(ix as AuthIndex);
+	}
+	<DKG<T> as Store>::NMembers::put(n_members as u64);
+	for ix in 0..(n_members) {
+		if ix < n_members - 1 {
+			<DKG<T> as Store>::Authorities::insert(ix as AuthIndex, T::AuthorityId::default());
+		} else {
+			<DKG<T> as Store>::Authorities::insert(ix as AuthIndex, auth.clone());
+		}
+	}
 	<DKG<T> as Store>::Threshold::set(threshold);
-	<DKG<T> as Store>::EncryptionPKs::put(
-		(0..n_members)
-			.map(|ix| Some(EncryptionPublicKey::from_raw_scalar([ix as u64, 0, 0, 0])))
-			.collect::<Vec<Option<EncryptionPublicKey>>>(),
-	);
-	<DKG<T> as Store>::CommittedPolynomials::put(vec![
-		vec![
-			Commitment::default();
-			threshold as usize
-		];
-		n_members
-	]);
-	<DKG<T> as Store>::EncryptedSharesLists::put(vec![
-		vec![
-			Some(EncryptedShare::default());
-			n_members
-		];
-		n_members
-	]);
-	<DKG<T> as Store>::IsCorrectDealer::put(vec![true; n_members]);
+	for ix in 0..n_members {
+		<DKG<T> as Store>::EncryptionPKs::insert(ix as AuthIndex, EncryptionPublicKey::from_raw_scalar([ix as u64, 0, 0, 0]));
+		//<DKG<T> as Store>::CommittedPolynomials::insert(ix as AuthIndex, vec![Commitment::default(); threshold as usize	]);
+		//for ix_rec in 0..n_members {
+		//	<DKG<T> as Store>::EncryptedShares::insert((ix as AuthIndex, ix_rec as AuthIndex), EncryptedShare::default());
+		//}
+		<DKG<T> as Store>::IsCorrectDealer::insert(ix as AuthIndex, true);
+	}
 }
 
 #[cfg(test)]
