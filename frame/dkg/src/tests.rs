@@ -80,7 +80,7 @@ pub(crate) fn init(my_id: sp_dkg::crypto::AuthorityId, n_members: usize, thresho
 	authorities.sort();
 
 	DKG::init_store(&authorities[..]);
-	for ix in 0..N_MEMBERS {
+	for ix in 0..n_members {
 		assert_eq!(authorities[ix], <DKG as Store>::Authorities::get(ix as AuthIndex));
 	}
 	DKG::set_threshold(threshold);
