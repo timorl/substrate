@@ -9,15 +9,15 @@ use crate::Module as DKG;
 use sp_dkg::{AuthIndex, Commitment, EncryptedShare, EncryptionPublicKey, Scalar};
 use sp_std::prelude::*;
 
-const MAX_MAGNITUDE: u32 = 8;
+const MAX_SIZE: u32 = 256;
 benchmarks! {
 	_ {
-		let n in 2..MAX_MAGNITUDE => ();
+		let n in 1..MAX_SIZE/4=> ();
 	}
 
 	handle_round0 {
 		let n in ...;
-		let n = 2usize.pow(n);
+		let n = (4*n) as usize;
 		let threshold = n/ 3 + 1;
 
 		init::<T>(n, threshold as u64);
@@ -25,7 +25,7 @@ benchmarks! {
 
 	post_encryption_key {
 		let n in ...;
-		let n = 2usize.pow(n);
+		let n = (4*n) as usize;
 		let threshold = n/ 3 + 1;
 
 		init::<T>(n, threshold as u64);
@@ -38,7 +38,7 @@ benchmarks! {
 
 	handle_round1 {
 		let n in ...;
-		let n = 2usize.pow(n);
+		let n = (4*n) as usize;
 		let threshold = n/ 3 + 1;
 
 		init::<T>(n, threshold as u64);
@@ -46,7 +46,7 @@ benchmarks! {
 
 	post_secret_shares {
 		let n in ...;
-		let n = 2usize.pow(n);
+		let n = (4*n) as usize;
 		let threshold = n/ 3 + 1;
 
 		init::<T>(n, threshold as u64);
@@ -78,7 +78,7 @@ benchmarks! {
 
 	post_disputes {
 		let n in ...;
-		let n = 2usize.pow(n);
+		let n = (4*n) as usize;
 		let threshold = n/ 3 + 1;
 
 		init::<T>(n, threshold as u64);
