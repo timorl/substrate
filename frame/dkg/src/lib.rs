@@ -91,12 +91,6 @@ pub mod crypto {
 		}
 	}
 
-	impl Into<sp_dkg::crypto::Public> for DKGId {
-		fn into(self) -> sp_dkg::crypto::Public {
-			self.0
-		}
-	}
-
 	impl AsRef<[u8]> for DKGId {
 		fn as_ref(&self) -> &[u8] {
 			AsRef::<[u8]>::as_ref(&self.0)
