@@ -160,8 +160,6 @@ where
 		max_duration: time::Duration,
 		record_proof: RecordProof,
 	) -> Self::Proposal {
-		//TODO: inner uses blocking spawn handle, consider using it for waiting for randomness
-		// we leave some time for actually preparing the block
 		let now = time::Instant::now();
 		let deadline = now + max_duration - max_duration / 3;
 

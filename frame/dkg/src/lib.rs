@@ -24,7 +24,7 @@
 //! accompanying README.md, see also any description of the Pedersen DKG protocol (for
 //! instance the original paper https://link.springer.com/chapter/10.1007%2F3-540-46416-6_47).
 //! To configure the pallet one must provide in the config 1) the list of authorities running
-//! the protocol, and 2) the threshold.
+//! the protocol, 2) the threshold, 3) the block number till which the protocol should terminate.
 
 #![cfg_attr(not(feature = "std"), no_std)]
 
@@ -49,11 +49,6 @@ use sp_dkg::{
 
 mod benchmarking;
 mod tests;
-
-// n is the number of nodes in the committee
-// node indices are 0-based: 0, 1, 2, ..., n-1
-// t is the threshold: it is necessary and sufficient to have t shares to combine
-// the degree of the polynomial is thus t-1
 
 pub mod crypto {
 	use codec::{Decode, Encode};
@@ -146,31 +141,6 @@ pub trait Trait: CreateSignedTransaction<Call<Self>> {
 decl_storage! {
 	trait Store for Module<T: Trait> as DKGWorker {
 
-		// round 0
-
-		EncryptionPKs: map hasher(twox_64_concat) AuthIndex => EncryptionPublicKey;
-
-
-		// round 1
-
-		// ith entry is the CommitedPoly of ith node submitted in a tx in round 1
-		CommittedPolynomials: map hasher(twox_64_concat) AuthIndex => Vec<Commitment>;
-		// (i,j) th entry is the share i dealt for j node in round 1
-		EncryptedShares: map hasher(twox_64_concat) (AuthIndex, AuthIndex) => EncryptedShare;
-
-
-		// round 2
-		// map of n bools: ith is true <=> both the below conditions are satisfied:
-		// 1) ith node succesfully participated in round 0 and round 1
-		// 2) there was no succesful dispute that proves cheating of ith node in round 2
-		IsCorrectDealer: map hasher(twox_64_concat) AuthIndex => bool = false;
-
-
-		// round 3
-		pub MasterVerificationKey: VerifyKey;
-		VerificationKeys: Vec<VerifyKey>;
-
-
 		/// The current authorities
 		pub Authorities: map hasher(twox_64_concat) AuthIndex => T::AuthorityId;
 
@@ -178,6 +148,32 @@ decl_storage! {
 		/// The threshold of BLS scheme
 		pub Threshold: u64;
 		pub NMembers: u64;
+
+		// round 0 data
+
+		EncryptionPKs: map hasher(twox_64_concat) AuthIndex => EncryptionPublicKey;
+
+
+		// round 1 data
+
+		// the value under key i is the CommitedPoly of ith node submitted in a tx in round 1
+		CommittedPolynomials: map hasher(twox_64_concat) AuthIndex => Vec<Commitment>;
+		// the value under key (i,j) is the share ith node dealt for jth node in round 1
+		EncryptedShares: map hasher(twox_64_concat) (AuthIndex, AuthIndex) => EncryptedShare;
+
+
+		// round 2 data
+
+		// map of n bools: ith is true <=> both the below conditions are satisfied:
+		// 1) ith node succesfully participated in round 0 and round 1
+		// 2) there was no succesful dispute that proves cheating of ith node in round 2
+		IsCorrectDealer: map hasher(twox_64_concat) AuthIndex => bool = false;
+
+
+		// round 3 data
+
+		pub MasterVerificationKey: VerifyKey;
+		VerificationKeys: Vec<VerifyKey>;
 	}
 	add_extra_genesis {
 		config(authorities): Vec<T::AuthorityId>;

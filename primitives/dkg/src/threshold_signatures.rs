@@ -196,8 +196,7 @@ fn lagrange_coef(knots: &Vec<Scalar>, knot: Scalar, target: Scalar) -> Scalar {
 	num * den.invert().unwrap()
 }
 
-/// The implementation mocks BLS threshold keys by using a set of ed25519 keys.
-/// To be replaced in Milestone 2.
+/// Threshold BLS keys.
 impl KeyBox {
 	pub fn new(
 		share_provider: Option<ShareProvider>,
@@ -228,7 +227,7 @@ impl KeyBox {
 		self.verify_keys[share.creator as usize].verify(msg, &share.data)
 	}
 
-	// Some(share) if succeeded and None if failed for some reason (e.g. not enough shares) -- should add error handling later
+	// Some(share) if succeeded and None if failed for some reason (e.g. not enough shares)
 	// Assumption: shares are for the same msg, are valid, and there are exactly threshold of them
 	pub fn combine_shares(&self, shares: &Vec<Share>) -> Signature {
 		assert!(shares.len() as u64 == self.threshold);
@@ -254,8 +253,9 @@ impl KeyBox {
 	}
 }
 
-// TODO: this hashing function gen ^ hash(msg) is not secure as the log is known for the result.
-// Change to try-and-increment or a deterministic one at the earliest convinience.
+// WARNING: this hashing function gen ^ hash(msg) is not secure because the log of the hash is known.
+// The bls12_381 library does not provide a Hash to G1 implementation. Need to replace this by a secure
+// hash to G1 implementation as soon as it is available.
 pub fn hash_to_curve(msg: &Vec<u8>) -> G1Affine {
 	let mut hasher = Sha3_256::new();
 	hasher.input(msg);

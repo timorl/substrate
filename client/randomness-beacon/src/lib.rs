@@ -36,7 +36,6 @@ use std::{
 use std::cmp::Ordering;
 use std::collections::BinaryHeap;
 
-//pub type NonceInfo<B> = (<B as BlockT>::Hash, NumberFor<B>);
 pub type Nonce<B> = <B as BlockT>::Hash;
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
@@ -215,13 +214,10 @@ where
 		}
 	}
 
-	// prunes all topics that are >=30 blocks lower than at_height
+	// prunes all topics that are >=60 blocks lower than at_height
 	fn prune_old_topics(&mut self, at_height: NumberFor<B>) {
 		while let Some(nonce_info) = self.height_queue.peek() {
-			// TODO: make this constant 30 into a parameter
-			if *nonce_info.height() + 30.into() <= at_height {
-				// TODO: make sure it is safe to prune this way...
-				// The channels are closed, is this fine?
+			if *nonce_info.height() + 60.into() <= at_height {
 				self.topics.remove(&nonce_info.nonce());
 				self.height_queue.pop();
 			}
@@ -250,7 +246,6 @@ where
 				let decoded = GossipMessage::<B>::decode(&mut &notification.message[..]);
 				match decoded {
 					Ok(gm) => {
-						// Some filtering may happen here
 						future::ready(Some(gm))
 					}
 					Err(ref e) => {
@@ -338,7 +333,6 @@ where
 			Ok(None) | Err(_) => return None,
 		};
 
-		// TODO: need to adjust this once the fork-aware version of the DKG pallet is ready
 		let mut raw_key = None;
 		if ix.is_some() {
 			let url = format!("http://localhost:{}", self.http_rpc_port);
@@ -407,11 +401,6 @@ where
 					let periodic_sender = futures_timer::Delay::new(INITIAL_WAIT);
 					self.topics
 						.insert(topic, (incoming, msg, periodic_sender, rbbox, shares));
-				} else {
-					info!(
-						"Obtained a new nonce {:?} but could not retrieve the corresponding rbbox.",
-						new_nonce
-					);
 				}
 			}
 		}
@@ -691,86 +680,6 @@ mod tests {
 			Poll::Ready(())
 		}));
 		assert!(alice_rg.topics.contains_key(&ni.nonce));
-		server.close();
-	}
-
-	#[test]
-	#[ignore]
-	fn gathers_shares() {
-		let threshold = 2;
-		let network = TestNetwork::default();
-
-		let server = serve();
-
-		let public_keybox_parts = Some((
-			Some(0),
-			vec![VerifyKey::default()],
-			VerifyKey::default(),
-			threshold,
-		));
-		let storage_key_sk = Some(KEY.to_vec());
-		let runtime_api = Arc::new(TestApi::new(
-			Some(VerifyKey::default()),
-			0,
-			threshold,
-			None,
-			public_keybox_parts,
-			storage_key_sk,
-			0,
-			1,
-		));
-
-		let (tx, alice_rrx) = std::sync::mpsc::channel();
-		let alice_rtx = Some(tx);
-		let (mut alice_ni_tx, alice_ni_rx) = channel(1);
-
-		let mut alice_rg = RandomnessGossip::new(
-			threshold,
-			alice_ni_rx,
-			network.clone(),
-			alice_rtx,
-			runtime_api.clone(),
-			0,
-		);
-
-		let (tx, bob_rrx) = std::sync::mpsc::channel();
-		let bob_rtx = Some(tx);
-		let (mut bob_ni_tx, bob_ni_rx) = channel(1);
-
-		let mut bob_rg = RandomnessGossip::new(
-			threshold,
-			bob_ni_rx,
-			network.clone(),
-			bob_rtx,
-			runtime_api,
-			0,
-		);
-
-		let ni = NonceInfo {
-			nonce: Hash::default(),
-			height: BlockNumber::default(),
-		};
-
-		assert!(alice_ni_tx.try_send(ni.clone()).is_ok());
-		assert!(bob_ni_tx.try_send(ni.clone()).is_ok());
-
-		futures::executor::block_on(futures::future::poll_fn(|cx| {
-			for _ in 0..10 {
-				let res = alice_rg.poll_unpin(cx);
-				if let Poll::Ready(()) = res {
-					unreachable!("As long as network is alive, RandomnessGossip should go on.");
-				}
-				let res = bob_rg.poll_unpin(cx);
-				if let Poll::Ready(()) = res {
-					unreachable!("As long as network is alive, RandomnessGossip should go on.");
-				}
-			}
-			Poll::Ready(())
-		}));
-		assert!(alice_rg.topics.contains_key(&ni.nonce));
-		assert!(bob_rg.topics.contains_key(&ni.nonce));
-		assert!(alice_rrx.recv().is_ok());
-		assert!(bob_rrx.recv().is_ok());
 		server.close();
 	}
 }

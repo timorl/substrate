@@ -4,10 +4,11 @@ This is an instatiation of the classical Pedersen DKG protocol that uses the blo
 
 # Configuration of the Pallet
 
-The pallet requires two items in the configuration
+The pallet requires three items in the configuration
 
 - A vector of committee members `authorities` that are meant to execute the protocol.
 - A `threshold: u64` that is between `1` and the total number of `authorities` that determines how many authorities need to provide signature shares in order to sign a message.
+- A number `DKG_READY` that determines how much time (measured in the number of blocks from the genesis block) is the DKG allowed to last. Generally the more time we give the DKG too complete the more stable and resistant to delays it will be. For committees below 20, a safe value should 20-30 blocks, and for committees up to 100 nodes, we would recommend using around 80 blocks.
 
 
 # Results of the Pallet Execution
@@ -26,6 +27,10 @@ The execution of the protocol is divided into 4 rounds, indexed 0, 1, 2, 3. Each
 - Round 1 -- each committee member forms a proposal message that contains a commitment to a degree (t-1) (with t being the threshold) polynomial and list of encrypted shares, one per committee member (encrypted using the key posted in round 0). Note: the encryption is not yet implemented in Milestone 2 -- currently they are included in plaintext. This will be fixed in Milestone 3.
 - Round 2 -- each committee member posts a sequence of disputes (along with proofs) which indicates which of the members acted dishonestly during round 2.
 - Round 3 -- the disputes are summarized and all the members who were dishonest are "disqualified". The keys are then formed based on the honest submissions in Round 1.
+
+# Other Materials
+
+We refer to [our slides](https://docs.google.com/presentation/d/1DGCx_bqurKBfJUW28vkxBNHo_1mRvSfsqLqcEt-rgbU/edit?usp=sharing) explaining in high level the idea of generating randomness from BLS signatures, the role of DKG, and how is this idea implemented in substrate.
 
 
 License: Apache-2.0

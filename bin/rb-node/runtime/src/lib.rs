@@ -464,7 +464,6 @@ impl_runtime_apis! {
 		}
 
 		fn random_seed() -> <Block as BlockT>::Hash {
-			// TODO: replace with beacon when it's ready
 			RandomnessCollectiveFlip::random_seed()
 		}
 	}

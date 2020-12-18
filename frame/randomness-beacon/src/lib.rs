@@ -52,9 +52,9 @@ decl_storage! {
 	trait Store for Module<T: Trait> as RandomnessBeacon {
 		/// Random Bytes for the current block
 		Seed: Randomness<T::Hash>;
-		/// Was Seed set in this block?
+		/// Specifies when was Seed last set
 		LastUpdate: T::BlockNumber;
-		// Stores verifier needed to check randomness in blocks
+		/// Stores verifier needed to check randomness in blocks
 		Verifier get(fn verifier): RandomnessVerifier
 	}
 }
@@ -166,7 +166,7 @@ impl<T: Trait> ProvideInherent for Module<T> {
 		let now = <frame_system::Module<T>>::block_number();
 		if now > T::StartHeight::get() {
 			if (now - T::StartHeight::get()) % T::RandomnessPeriod::get() == 0.into() {
-				debug::info!("Extracting random bytes in block {:?}.", now);
+				debug::info!("Including randomness in the block nr {:?} that we author.", now);
 				return Some(Self::Call::set_randomness(extract_random_bytes::<T>(data)));
 			}
 		}
