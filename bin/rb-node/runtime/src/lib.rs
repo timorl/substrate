@@ -302,6 +302,7 @@ impl Get<Option<RandomnessVerifier>> for GetRandomnessVerifier {
 }
 
 impl pallet_randomness_beacon::Trait for Runtime {
+	type Event = Event;
 	type StartHeight = StartHeight;
 	type RandomnessVerifierReady = DKGReady;
 	type RandomnessVerifier = GetRandomnessVerifier;
@@ -382,7 +383,7 @@ construct_runtime!(
 		Balances: pallet_balances::{Module, Call, Storage, Config<T>, Event<T>},
 		TransactionPayment: pallet_transaction_payment::{Module, Storage},
 		Sudo: pallet_sudo::{Module, Call, Config<T>, Storage, Event<T>},
-		RandomnessBeacon: pallet_randomness_beacon::{Module, Call, Storage, Inherent},
+		RandomnessBeacon: pallet_randomness_beacon::{Module, Call, Storage, Inherent, Event<T>},
 		DKG: pallet_dkg::{Module, Call, Config<T>, Storage},
 	}
 );

@@ -28,7 +28,7 @@
 
 use codec::Encode;
 use frame_support::{
-	debug, decl_error, decl_module, decl_storage, traits::Get, traits::Randomness as RandomnessT,
+	debug, decl_error, decl_module, decl_storage, decl_event, traits::Get, traits::Randomness as RandomnessT,
 	weights::Weight,
 };
 use frame_system::ensure_none;
@@ -42,6 +42,7 @@ use sp_runtime::traits::Hash;
 use sp_std::result;
 
 pub trait Trait: frame_system::Trait {
+	type Event: From<Event<Self>> + Into<<Self as frame_system::Trait>::Event>;
 	type StartHeight: Get<Self::BlockNumber>;
 	type RandomnessPeriod: Get<Self::BlockNumber>;
 	type RandomnessVerifierReady: Get<Self::BlockNumber>;
@@ -59,20 +60,36 @@ decl_storage! {
 	}
 }
 
+
+decl_event!(
+	pub enum Event<T>
+	where
+		BlockNumber = <T as frame_system::Trait>::BlockNumber {
+		/// A fresh random seed was set at a particular block number.
+		SeedSet(BlockNumber),
+		/// The Randomness Beacon was initalized with a key box from DKG.
+		KeyInitialized(BlockNumber),
+	}
+);
+
 decl_error! {
 	pub enum Error for Module<T: Trait> {
 		SeedNotAvailable,
 	}
 }
 
+
 decl_module! {
 	pub struct Module<T: Trait> for enum Call where origin: T::Origin {
 		type Error = Error<T>;
+
+		fn deposit_event() = default;
 
 		fn on_initialize(now: T::BlockNumber) -> Weight {
 			if now == T::RandomnessVerifierReady::get() {
 				assert!(!Verifier::exists());
 				assert!(Self::set_master_key());
+				Self::deposit_event(RawEvent::KeyInitialized(now));
 			}
 
 			0
@@ -104,6 +121,8 @@ decl_module! {
 
 			<Self as Store>::Seed::put(randomness);
 			<Self as Store>::LastUpdate::put(now);
+
+			Self::deposit_event(RawEvent::SeedSet(now));
 		}
 
 		fn on_finalize(bn: T::BlockNumber) {
