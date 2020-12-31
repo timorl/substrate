@@ -390,6 +390,7 @@ mod tests {
 		type RandomnessVerifier = GetRandomnessVerifier;
 		type RandomnessVerifierReady = RandomnessVerifierReady;
 		type RandomnessPeriod = RandomnessPeriod;
+		type Event = ();
 	}
 
 	type RBeacon = Module<Test>;

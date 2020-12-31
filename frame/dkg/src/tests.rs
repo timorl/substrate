@@ -464,6 +464,7 @@ impl Trait for Runtime {
 	type Call = Call<Runtime>;
 	type AuthorityId = crypto::DKGId;
 	type DKGReady = DKGReady;
+	type Event = ();
 }
 
 pub type DKG = Module<Runtime>;
