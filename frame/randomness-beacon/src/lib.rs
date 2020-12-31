@@ -62,9 +62,7 @@ decl_storage! {
 
 
 decl_event!(
-	pub enum Event<T>
-	where
-		BlockNumber = <T as frame_system::Trait>::BlockNumber {
+	pub enum Event<T> where BlockNumber = <T as frame_system::Trait>::BlockNumber {
 		/// A fresh random seed was set at a particular block number.
 		SeedSet(BlockNumber),
 		/// The Randomness Beacon was initalized with a key box from DKG.

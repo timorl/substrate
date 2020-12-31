@@ -28,7 +28,7 @@
 
 #![cfg_attr(not(feature = "std"), no_std)]
 
-use frame_support::{debug, decl_module, decl_storage, traits::Get, Parameter};
+use frame_support::{debug, decl_module, decl_storage, decl_event, traits::Get, Parameter};
 use frame_system::{
 	ensure_signed,
 	offchain::{AppCrypto, CreateSignedTransaction, SendSignedTransaction, Signer},
@@ -123,6 +123,7 @@ pub mod crypto {
 }
 
 pub trait Trait: CreateSignedTransaction<Call<Self>> {
+	type Event: From<Event> + Into<<Self as frame_system::Trait>::Event>;
 	/// The identifier type for an offchain worker.
 	type AuthorityId: Member
 		+ Parameter
@@ -185,8 +186,19 @@ decl_storage! {
 	}
 }
 
+decl_event!(
+	pub enum Event {
+		/// DKG started with a given number of nodes and given threshold.
+		StartDKG(u64, u64),
+		/// A Round terminated succesfully for given number of nodes.
+		EndRound(u64, u64),
+	}
+);
+
 decl_module! {
 	pub struct Module<T: Trait> for enum Call where origin: T::Origin {
+
+		fn deposit_event() = default;
 
 		#[weight = 1_000_000]
 		pub fn post_encryption_key(origin, ix: AuthIndex, pk: EncryptionPublicKey) {
@@ -288,6 +300,16 @@ decl_module! {
 		}
 
 		fn on_finalize(bn: T::BlockNumber) {
+			for round_num in 0..4 {
+				if bn == Self::round_end(round_num) {
+					let count = match round_num {
+						0 => Self::count_encryption_keys_received(),
+						_ => Self::count_successful_nodes(),
+					};
+					Self::deposit_event(Event::EndRound(round_num as u64, count));
+				}
+			}
+
 			if bn != Self::round_end(2) {
 				return
 			}
@@ -341,7 +363,8 @@ impl<T: Trait> Module<T> {
 	fn init_store(authorities: &[T::AuthorityId]) {
 		if !authorities.is_empty() {
 			assert!(!NMembers::exists(), "Authorities are already initialized!");
-			NMembers::put(authorities.len() as u64);
+			let n_authorities = authorities.len() as u64;
+			NMembers::put(n_authorities);
 
 			let mut authorities = authorities.to_vec();
 			authorities.sort();
@@ -363,6 +386,30 @@ impl<T: Trait> Module<T> {
 		return rounds_left;
 	}
 
+	fn count_successful_nodes() -> u64 {
+		let n_members = Self::n_members();
+		let mut count = 0;
+		for ix in 0..n_members {
+			if IsCorrectDealer::contains_key(ix as u64) {
+				if IsCorrectDealer::get(ix as u64) == true {
+					count += 1;
+				}
+			}
+		}
+		count
+	}
+
+	fn count_encryption_keys_received() -> u64 {
+		let n_members = Self::n_members();
+		let mut count = 0;
+		for ix in 0..n_members {
+			if EncryptionPKs::contains_key(ix as u64) {
+				count += 1;
+			}
+		}
+		count
+	}
+
 	fn set_threshold(threshold: u64) {
 		assert!(
 			0 < threshold && threshold <= NMembers::get(),
@@ -371,6 +418,7 @@ impl<T: Trait> Module<T> {
 
 		assert!(!Threshold::exists(), "Threshold is already initialized!");
 		Threshold::set(threshold);
+		Self::deposit_event(Event::StartDKG(NMembers::get(), threshold));
 	}
 
 	fn check_authority(ix: AuthIndex, who: T::AccountId) -> bool {

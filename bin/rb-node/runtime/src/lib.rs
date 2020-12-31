@@ -278,6 +278,7 @@ parameter_types! {
 }
 
 impl pallet_dkg::Trait for Runtime {
+	type Event = Event;
 	type Call = Call;
 	type AuthorityId = pallet_dkg::crypto::DKGId;
 	type DKGReady = DKGReady;
@@ -384,7 +385,7 @@ construct_runtime!(
 		TransactionPayment: pallet_transaction_payment::{Module, Storage},
 		Sudo: pallet_sudo::{Module, Call, Config<T>, Storage, Event<T>},
 		RandomnessBeacon: pallet_randomness_beacon::{Module, Call, Storage, Inherent, Event<T>},
-		DKG: pallet_dkg::{Module, Call, Config<T>, Storage},
+		DKG: pallet_dkg::{Module, Call, Config<T>, Storage, Event},
 	}
 );
 
