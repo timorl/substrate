@@ -13,10 +13,10 @@ RUN apt-get update && \
 
 RUN curl https://sh.rustup.rs -sSf | sh -s -- -y && \
 	export PATH="$PATH:$HOME/.cargo/bin" && \
-	rustup toolchain install nightly-2020-10-06 && \
-	rustup target add wasm32-unknown-unknown --toolchain nightly-2020-10-06-x86_64-unknown-linux-gnu && \
+	rustup toolchain install nightly-2020-08-23 && \
+	rustup target add wasm32-unknown-unknown --toolchain nightly-2020-08-23-x86_64-unknown-linux-gnu && \
 	rustup default stable
-RUN export PATH="$PATH:$HOME/.cargo/bin" && cargo build -p rb-node
+RUN export PATH="$PATH:$HOME/.cargo/bin" && cargo +nightly-2020-08-23 build -p rb-node
 
 # ===== SECOND STAGE ======
 
