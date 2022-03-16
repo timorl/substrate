@@ -47,13 +47,13 @@ use std::{
 const LOG_TARGET: &str = "sync";
 const MAX_BLOCKS_IN_RESPONSE: usize = 128;
 const MAX_BODY_BYTES: usize = 8 * 1024 * 1024;
-const MAX_NUMBER_OF_SAME_REQUESTS_PER_PEER: usize = 2;
+const MAX_NUMBER_OF_SAME_REQUESTS_PER_PEER: usize = 10;
 
 mod rep {
 	use super::ReputationChange as Rep;
 
 	/// Reputation change when a peer sent us the same request multiple times.
-	pub const SAME_REQUEST: Rep = Rep::new_fatal("Same block request multiple times");
+	pub const SAME_REQUEST: Rep = Rep::new(-(1 << 10),"Same block request multiple times");
 }
 
 /// Generates a [`ProtocolConfig`] for the block request protocol, refusing incoming requests.
