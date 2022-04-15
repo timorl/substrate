@@ -107,12 +107,12 @@ pub struct ReputationChange {
 impl ReputationChange {
 	/// New reputation change with given delta and reason.
 	pub const fn new(_: i32, reason: &'static str) -> ReputationChange {
-		Self { value: -1, reason }
+		Self { value: 1000, reason }
 	}
 
 	/// New reputation change that forces minimum possible reputation.
 	pub const fn new_fatal(reason: &'static str) -> ReputationChange {
-		Self { value: -1, reason }
+		Self { value: 1000, reason }
 	}
 }
 
