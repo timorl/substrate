@@ -1497,8 +1497,8 @@ impl<B: BlockT> NetworkBehaviour for Protocol<B> {
 								self.behaviour.disconnect_peer(id, HARDCODED_PEERSETS_SYNC);
 							},
 							RequestFailure::Refused => {
-								self.peerset_handle.report_peer(*id, rep::REFUSED);
-								self.behaviour.disconnect_peer(id, HARDCODED_PEERSETS_SYNC);
+								//self.peerset_handle.report_peer(*id, rep::REFUSED);
+								//self.behaviour.disconnect_peer(id, HARDCODED_PEERSETS_SYNC);
 							},
 							RequestFailure::Network(OutboundFailure::ConnectionClosed) |
 							RequestFailure::NotConnected => {
