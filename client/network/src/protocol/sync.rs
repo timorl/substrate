@@ -2289,11 +2289,27 @@ fn handle_ancestor_search_state<B: BlockT>(
 	match state {
 		AncestorSearchState::ExponentialBackoff(next_distance_to_tip) => {
 			let next_distance_to_tip = *next_distance_to_tip;
+
+			debug!(
+				target: "ancestor-search",
+				"ExponentialBackoff with next_distance_to_tip {:?}.",
+				next_distance_to_tip
+			);
+
 			if block_hash_match && next_distance_to_tip == One::one() {
 				// We found the ancestor in the first step so there is no need to execute binary
 				// search.
+				debug!(
+					target: "ancestor-search",
+					"ExponentialBackoff: None."
+				);
 				return None
 			}
+			debug!(
+				target: "ancestor-search",
+				"ExponentialBackoff: block_hash_match {:?}.",
+				block_hash_match
+			);
 			if block_hash_match {
 				let left = curr_block_num;
 				let right = left + next_distance_to_tip / two;
@@ -2310,7 +2326,18 @@ fn handle_ancestor_search_state<B: BlockT>(
 			}
 		},
 		AncestorSearchState::BinarySearch(mut left, mut right) => {
+			debug!(
+				target: "ancestor-search",
+				"BinarySearch with left {:?} and right {:?}.",
+				left,
+				right,
+			);
 			if left >= curr_block_num {
+				debug!(
+					target: "ancestor-search",
+					"BinarySearch: None by left >= curr_block_num.",
+					left,
+				);
 				return None
 			}
 			if block_hash_match {
@@ -2321,8 +2348,18 @@ fn handle_ancestor_search_state<B: BlockT>(
 			assert!(right >= left);
 			let middle = left + (right - left) / two;
 			if middle == curr_block_num {
+				debug!(
+					target: "ancestor-search",
+					"BinarySearch: None by middle == curr_block_num.",
+					left,
+				);
 				None
 			} else {
+				debug!(
+					target: "ancestor-search",
+					"BinarySearch: else.",
+					left,
+				);
 				Some((AncestorSearchState::BinarySearch(left, right), middle))
 			}
 		},
