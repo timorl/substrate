@@ -2336,7 +2336,6 @@ fn handle_ancestor_search_state<B: BlockT>(
 				debug!(
 					target: "ancestor-search",
 					"BinarySearch: None by left >= curr_block_num.",
-					left,
 				);
 				return None
 			}
@@ -2351,14 +2350,12 @@ fn handle_ancestor_search_state<B: BlockT>(
 				debug!(
 					target: "ancestor-search",
 					"BinarySearch: None by middle == curr_block_num.",
-					left,
 				);
 				None
 			} else {
 				debug!(
 					target: "ancestor-search",
 					"BinarySearch: else.",
-					left,
 				);
 				Some((AncestorSearchState::BinarySearch(left, right), middle))
 			}
